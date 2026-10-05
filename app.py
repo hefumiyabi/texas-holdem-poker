@@ -4,6 +4,10 @@ Texas Hold'em Poker Game Main Application
 """
 
 import os
+import hashlib
+import secrets
+from collections import defaultdict, deque
+from functools import wraps
 
 # 运行模式配置（可通过环境变量覆盖，便于 Android 内置服务器等场景）
 #   POKER_ASYNC_MODE: eventlet（默认，PC/局域网）或 threading（Android 单机，无 C 扩展依赖）
@@ -25,7 +29,7 @@ import time
 import re
 import traceback
 from typing import Dict, List, Optional
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, request, jsonify, render_template, make_response
 from flask_socketio import SocketIO, emit, join_room, leave_room, rooms
 import threading
 import sqlite3
@@ -49,8 +53,11 @@ from player_persistence import update_player_chips, get_player
 
 # 创建Flask应用
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'poker_game_secret_key_2025'
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode=POKER_ASYNC_MODE, 
+app.config['SECRET_KEY'] = os.environ.get('POKER_SECRET_KEY') or secrets.token_hex(32)
+app.config['POKER_COOKIE_SECURE'] = os.environ.get('POKER_COOKIE_SECURE', 'false').lower() in ('1', 'true', 'yes')
+_configured_origins = os.environ.get('POKER_ALLOWED_ORIGINS', '').strip()
+_allowed_origins = [origin.strip() for origin in _configured_origins.split(',') if origin.strip()] or None
+socketio = SocketIO(app, cors_allowed_origins=_allowed_origins, async_mode=POKER_ASYNC_MODE,
                   logger=False, engineio_logger=False, ping_timeout=30, ping_interval=25)
 
 # Socket.IO错误处理
@@ -81,6 +88,12 @@ current_hands: Dict[str, int] = {}    # table_id -> hand_id (当前手牌ID)
 next_round_votes = {}  # {table_id: {player_id: True/False}}
 
 _bot_processing_locks: Dict[str, threading.Lock] = {}
+
+SESSION_COOKIE_NAME = 'poker_session'
+SESSION_TTL_SECONDS = 30 * 24 * 60 * 60
+JOIN_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+_rate_limit_buckets = defaultdict(deque)
+_rate_limit_lock = threading.Lock()
 
 
 def process_bot_actions(table_id: str):
@@ -385,7 +398,247 @@ def validate_nickname(nickname: str) -> bool:
     return bool(re.match(pattern, nickname))
 
 
+def _token_hash(raw_token: str) -> str:
+    return hashlib.sha256(raw_token.encode('utf-8')).hexdigest()
+
+
+def _authenticated_guest() -> Optional[Dict]:
+    raw_token = request.cookies.get(SESSION_COOKIE_NAME)
+    if not raw_token:
+        return None
+    return db.get_guest_session(_token_hash(raw_token))
+
+
+def _require_guest(handler):
+    @wraps(handler)
+    def wrapped(*args, **kwargs):
+        guest = _authenticated_guest()
+        if not guest:
+            return jsonify({'success': False, 'message': '请先以游客身份进入'}), 401
+        return handler(guest, *args, **kwargs)
+    return wrapped
+
+
+def _rate_limited(bucket_name: str, limit: int, window_seconds: int = 60):
+    """进程内轻量限流；单实例公测足够，未来多实例改为共享存储。"""
+    def decorator(handler):
+        @wraps(handler)
+        def wrapped(*args, **kwargs):
+            key = (bucket_name, request.remote_addr or 'unknown')
+            now = time.time()
+            with _rate_limit_lock:
+                bucket = _rate_limit_buckets[key]
+                while bucket and bucket[0] <= now - window_seconds:
+                    bucket.popleft()
+                if len(bucket) >= limit:
+                    return jsonify({'success': False, 'message': '请求过于频繁，请稍后重试'}), 429
+                bucket.append(now)
+            return handler(*args, **kwargs)
+        return wrapped
+    return decorator
+
+
+def _new_join_code() -> str:
+    for _ in range(32):
+        code = ''.join(secrets.choice(JOIN_CODE_ALPHABET) for _ in range(6))
+        if not db.get_table_by_join_code(code):
+            return code
+    raise RuntimeError('无法生成唯一房间码')
+
+
+def _table_from_record(record: Dict) -> Table:
+    table = tables.get(record['id'])
+    if table:
+        return table
+    table = Table(
+        table_id=record['id'],
+        title=record['title'],
+        small_blind=record['small_blind'],
+        big_blind=record['big_blind'],
+        max_players=record['max_players'],
+        initial_chips=record['initial_chips'],
+        game_mode=record.get('game_mode', 'blinds'),
+        ante_percentage=record.get('ante_percentage', 0.02),
+    )
+    tables[record['id']] = table
+    for row in db.get_table_players(record['id']):
+        if row.get('is_bot'):
+            continue
+        user = db.get_user(row['player_id'])
+        if not user:
+            continue
+        player = players.get(row['player_id']) or Player(row['player_id'], user['nickname'], row['chips'])
+        players[player.id] = player
+        table.add_player_at_position(player, row['position'])
+    return table
+
+
+def _room_preview(record: Dict) -> Dict:
+    room_players = db.get_table_players(record['id'])
+    host = db.get_user(record.get('host_id') or record['created_by'])
+    return {
+        'join_code': record['join_code'],
+        'title': record['title'],
+        'small_blind': record['small_blind'],
+        'big_blind': record['big_blind'],
+        'max_players': record['max_players'],
+        'initial_chips': record['initial_chips'],
+        'game_mode': record.get('game_mode', 'blinds'),
+        'ante_percentage': record.get('ante_percentage', 0.02),
+        'player_count': len(room_players),
+        'host': {'nickname': host['nickname']} if host else None,
+    }
+
+
+def _room_details(record: Dict, current_player_id: str) -> Dict:
+    payload = _room_preview(record)
+    host_id = record.get('host_id') or record['created_by']
+    host = db.get_user(host_id)
+    payload.update({
+        'id': record['id'],
+        'host': {'id': host_id, 'nickname': host['nickname']} if host else None,
+        'is_host': current_player_id == host_id,
+        'invite_url': request.url_root.rstrip('/') + '/room/' + record['join_code'],
+    })
+    return payload
+
+
 # REST API 路由
+
+@app.route('/api/v1/guest-sessions', methods=['POST'])
+@_rate_limited('guest-session', 10)
+def create_guest_session_v1():
+    data = request.get_json(silent=True) or {}
+    nickname = str(data.get('nickname', '')).strip()
+    if not validate_nickname(nickname):
+        return jsonify({'success': False, 'message': '昵称需为 1-20 个中英文、数字、空格或连字符'}), 400
+
+    player_id = db.create_user(nickname)
+    player = db.get_user(player_id)
+    raw_token = secrets.token_urlsafe(32)
+    db.create_guest_session(_token_hash(raw_token), player_id, time.time() + SESSION_TTL_SECONDS)
+    response = make_response(jsonify({
+        'success': True,
+        'player': {'id': player['id'], 'nickname': player['nickname'], 'chips': player['chips']},
+    }), 201)
+    response.set_cookie(
+        SESSION_COOKIE_NAME,
+        raw_token,
+        max_age=SESSION_TTL_SECONDS,
+        httponly=True,
+        secure=app.config['POKER_COOKIE_SECURE'],
+        samesite='Lax',
+        path='/',
+    )
+    return response
+
+
+@app.route('/api/v1/me', methods=['GET'])
+@_require_guest
+def current_guest_v1(guest):
+    return jsonify({
+        'success': True,
+        'player': {'id': guest['player_id'], 'nickname': guest['nickname'], 'chips': guest['chips']},
+    })
+
+
+@app.route('/api/v1/guest-sessions/current', methods=['DELETE'])
+def delete_guest_session_v1():
+    raw_token = request.cookies.get(SESSION_COOKIE_NAME)
+    if raw_token:
+        db.revoke_guest_session(_token_hash(raw_token))
+    response = make_response('', 204)
+    response.delete_cookie(SESSION_COOKIE_NAME, path='/', samesite='Lax')
+    return response
+
+
+@app.route('/api/v1/rooms', methods=['POST'])
+@_rate_limited('create-room', 10)
+@_require_guest
+def create_private_room_v1(guest):
+    data = request.get_json(silent=True) or {}
+    title = str(data.get('title', '好友牌桌')).strip()
+    try:
+        small_blind = int(data.get('small_blind', 10))
+        big_blind = int(data.get('big_blind', 20))
+        max_players = int(data.get('max_players', 6))
+        initial_chips = int(data.get('initial_chips', 1000))
+        ante_percentage = float(data.get('ante_percentage', 0.02))
+    except (TypeError, ValueError):
+        return jsonify({'success': False, 'message': '房间参数格式无效'}), 400
+    game_mode = str(data.get('game_mode', 'blinds'))
+    if (not title or len(title) > 30 or small_blind < 1 or big_blind <= small_blind
+            or max_players not in (2, 4, 6, 9) or initial_chips not in (500, 1000, 2000, 5000, 10000)
+            or game_mode not in ('blinds', 'ante') or not 0.005 <= ante_percentage <= 0.1):
+        return jsonify({'success': False, 'message': '房间参数无效'}), 400
+
+    join_code = _new_join_code()
+    table_id = db.create_table(
+        title=title,
+        created_by=guest['player_id'],
+        small_blind=small_blind,
+        big_blind=big_blind,
+        max_players=max_players,
+        initial_chips=initial_chips,
+        game_mode=game_mode,
+        ante_percentage=ante_percentage,
+        join_code=join_code,
+        host_id=guest['player_id'],
+        visibility='private',
+    )
+    db.join_table(table_id, guest['player_id'], 0)
+    record = db.get_table(table_id)
+    table = _table_from_record(record)
+    if not table.get_player(guest['player_id']):
+        player = Player(guest['player_id'], guest['nickname'], initial_chips)
+        players[player.id] = player
+        table.add_player_at_position(player, 0)
+    return jsonify({'success': True, 'room': _room_details(record, guest['player_id'])}), 201
+
+
+@app.route('/api/v1/rooms/<join_code>', methods=['GET'])
+@_rate_limited('room-preview', 60)
+def get_private_room_v1(join_code):
+    if not re.fullmatch(r'[A-Za-z2-9]{6}', join_code):
+        return jsonify({'success': False, 'message': '房间不存在'}), 404
+    record = db.get_table_by_join_code(join_code)
+    if not record:
+        return jsonify({'success': False, 'message': '房间不存在'}), 404
+    return jsonify({'success': True, 'room': _room_preview(record)})
+
+
+@app.route('/api/v1/rooms/<join_code>/join', methods=['POST'])
+@_rate_limited('join-room', 30)
+@_require_guest
+def join_private_room_v1(guest, join_code):
+    record = db.get_table_by_join_code(join_code)
+    if not record:
+        return jsonify({'success': False, 'message': '房间不存在'}), 404
+    data = request.get_json(silent=True) or {}
+    position = data.get('position')
+    if position is not None:
+        if isinstance(position, bool) or not isinstance(position, int) or not 0 <= position < record['max_players']:
+            return jsonify({'success': False, 'message': '座位无效'}), 400
+    try:
+        joined = db.join_table(record['id'], guest['player_id'], position)
+    except sqlite3.IntegrityError:
+        joined = False
+    if not joined:
+        return jsonify({'success': False, 'message': '房间已满或座位已占用'}), 409
+    table = _table_from_record(record)
+    if not table.get_player(guest['player_id']):
+        row = next((p for p in db.get_table_players(record['id']) if p['player_id'] == guest['player_id']), None)
+        player = Player(guest['player_id'], guest['nickname'], row['chips'] if row else record['initial_chips'])
+        players[player.id] = player
+        if row:
+            table.add_player_at_position(player, row['position'])
+        else:
+            table.add_player(player)
+    return jsonify({
+        'success': True,
+        'player': {'id': guest['player_id'], 'nickname': guest['nickname'], 'chips': guest['chips']},
+        'room': _room_details(record, guest['player_id']),
+    })
 
 @app.route('/')
 def index():
@@ -2430,4 +2683,4 @@ if __name__ == '__main__':
         print("🎮 游戏已准备就绪！")
         print("⚙️ 自动维护已启动 (每3分钟清理空房间)")
     
-    socketio.run(app, host=POKER_HOST, port=POKER_PORT, debug=POKER_DEBUG) 
+    socketio.run(app, host=POKER_HOST, port=POKER_PORT, debug=POKER_DEBUG)

@@ -88,6 +88,32 @@ class PokerDatabase:
                     UNIQUE(table_id, position)
                 )
             ''')
+
+            # 安全游客会话：只保存令牌哈希，原始令牌只存在于浏览器 HttpOnly Cookie。
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS guest_sessions (
+                    token_hash TEXT PRIMARY KEY,
+                    player_id TEXT NOT NULL,
+                    created_at REAL NOT NULL,
+                    expires_at REAL NOT NULL,
+                    last_seen REAL NOT NULL,
+                    revoked_at REAL,
+                    FOREIGN KEY (player_id) REFERENCES users (id)
+                )
+            ''')
+
+            # 旧数据库通过幂等 ALTER 迁移到私密房结构。
+            table_columns = {
+                row['name'] for row in cursor.execute('PRAGMA table_info(tables)').fetchall()
+            }
+            if 'join_code' not in table_columns:
+                cursor.execute('ALTER TABLE tables ADD COLUMN join_code TEXT')
+            if 'host_id' not in table_columns:
+                cursor.execute('ALTER TABLE tables ADD COLUMN host_id TEXT')
+            if 'visibility' not in table_columns:
+                cursor.execute("ALTER TABLE tables ADD COLUMN visibility TEXT NOT NULL DEFAULT 'private'")
+            cursor.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_tables_join_code ON tables(join_code)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_guest_sessions_player ON guest_sessions(player_id)')
             
             conn.commit()
             print("数据库初始化完成")
@@ -160,9 +186,11 @@ class PokerDatabase:
                 ''', (time.time(), user_id))
                 conn.commit()
     
-    def create_table(self, title: str, created_by: str, small_blind: int = 10, 
+    def create_table(self, title: str, created_by: str, small_blind: int = 10,
                     big_blind: int = 20, max_players: int = 9, initial_chips: int = 1000,
-                    game_mode: str = "blinds", ante_percentage: float = 0.02) -> str:
+                    game_mode: str = "blinds", ante_percentage: float = 0.02,
+                    join_code: Optional[str] = None, host_id: Optional[str] = None,
+                    visibility: str = "private") -> str:
         """创建新房间"""
         with self.lock:
             with self.get_connection() as conn:
@@ -174,11 +202,12 @@ class PokerDatabase:
                 cursor.execute('''
                     INSERT INTO tables (
                         id, title, small_blind, big_blind, max_players, initial_chips,
-                        game_mode, ante_percentage, created_by, created_at, last_activity
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        game_mode, ante_percentage, created_by, created_at, last_activity,
+                        join_code, host_id, visibility
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (table_id, title, small_blind, big_blind, max_players, 
                       initial_chips, game_mode, ante_percentage, created_by, 
-                      current_time, current_time))
+                      current_time, current_time, join_code, host_id or created_by, visibility))
                 
                 conn.commit()
                 print(f"创建新房间: {title} (ID: {table_id}) by {created_by}, 模式: {game_mode}")
@@ -194,6 +223,60 @@ class PokerDatabase:
             if row:
                 return dict(row)
             return None
+
+    def get_table_by_join_code(self, join_code: str) -> Optional[Dict]:
+        """通过不区分大小写的房间码获取活跃私密房。"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                'SELECT * FROM tables WHERE join_code = ? AND is_active = 1',
+                (join_code.upper(),),
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def create_guest_session(self, token_hash: str, player_id: str, expires_at: float) -> None:
+        now = time.time()
+        with self.lock:
+            with self.get_connection() as conn:
+                conn.execute('''
+                    INSERT INTO guest_sessions (
+                        token_hash, player_id, created_at, expires_at, last_seen, revoked_at
+                    ) VALUES (?, ?, ?, ?, ?, NULL)
+                ''', (token_hash, player_id, now, expires_at, now))
+                conn.commit()
+
+    def get_guest_session(self, token_hash: str, now: Optional[float] = None) -> Optional[Dict]:
+        current_time = now or time.time()
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT gs.token_hash, gs.player_id, gs.created_at, gs.expires_at,
+                       gs.last_seen, u.nickname, u.chips
+                FROM guest_sessions gs
+                JOIN users u ON u.id = gs.player_id
+                WHERE gs.token_hash = ? AND gs.revoked_at IS NULL AND gs.expires_at > ?
+            ''', (token_hash, current_time))
+            row = cursor.fetchone()
+            if not row:
+                return None
+            conn.execute(
+                'UPDATE guest_sessions SET last_seen = ? WHERE token_hash = ?',
+                (current_time, token_hash),
+            )
+            conn.commit()
+            return dict(row)
+
+    def revoke_guest_session(self, token_hash: str) -> bool:
+        with self.lock:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    'UPDATE guest_sessions SET revoked_at = ? WHERE token_hash = ? AND revoked_at IS NULL',
+                    (time.time(), token_hash),
+                )
+                conn.commit()
+                return cursor.rowcount > 0
     
     def get_player_table_ids(self, player_id: str) -> List[str]:
         """获取玩家当前所在的所有活跃房间ID（用于大厅判断'进入房间'而非'加入房间'）"""
@@ -496,4 +579,4 @@ class PokerDatabase:
                 return len(tables_to_close)
 
 # 全局数据库实例
-db = PokerDatabase() 
+db = PokerDatabase()
