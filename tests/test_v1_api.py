@@ -47,6 +47,20 @@ class V1ApiTestCase(unittest.TestCase):
         self.assertIsNotNone(first_client.get_cookie("poker_session"))
         self.assertIsNotNone(second_client.get_cookie("poker_session"))
 
+    def test_private_rooms_never_leak_into_legacy_lobby_or_identity_lookup(self):
+        client = self.app_module.app.test_client()
+        player = self.create_guest(client, "River")
+        created = client.post("/api/v1/rooms", json={"title": "Secret", "max_players": 6})
+        room_id = created.get_json()["room"]["id"]
+
+        legacy_tables = client.get("/api/tables").get_json()["tables"]
+        legacy_identity = client.post("/api/join", json={"nickname": "River"}).get_json()["player"]
+
+        self.assertNotIn(room_id, [room["id"] for room in legacy_tables])
+        self.assertNotEqual(legacy_identity["id"], player["id"])
+        self.assertEqual(client.get(f"/api/table_players?table_id={room_id}").status_code, 404)
+        self.assertEqual(client.get(f"/api/showdown_history/{room_id}").status_code, 404)
+
     def test_cookie_restores_identity_and_logout_revokes_it(self):
         client = self.app_module.app.test_client()
         player = self.create_guest(client)

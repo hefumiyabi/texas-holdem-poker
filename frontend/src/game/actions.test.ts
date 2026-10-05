@@ -2,8 +2,14 @@ import { describe, expect, it } from 'vitest'
 import { getBetPresets, getLegalActions } from './actions'
 
 describe('poker actions', () => {
-  it('offers check and bet when nothing is owed', () => {
+  it('offers check and raise when a blind is already posted', () => {
     expect(getLegalActions({ currentBet: 20, playerBet: 20, chips: 980 })).toEqual([
+      'fold', 'check', 'raise', 'all_in',
+    ])
+  })
+
+  it('offers a bet when no wager exists on the street', () => {
+    expect(getLegalActions({ currentBet: 0, playerBet: 0, chips: 980 })).toEqual([
       'fold', 'check', 'bet', 'all_in',
     ])
   })

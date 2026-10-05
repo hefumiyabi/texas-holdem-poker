@@ -56,6 +56,20 @@ class V1SocketTestCase(unittest.TestCase):
 
         self.assertEqual(errors[-1]["code"], "auth_required")
 
+    def test_legacy_socket_cannot_enter_private_room_by_uuid_or_nickname(self):
+        _host_client, host, room = self.create_room("River")
+        legacy_client = self.app_module.app.test_client()
+        legacy_socket = self.app_module.socketio.test_client(
+            self.app_module.app, flask_test_client=legacy_client
+        )
+        legacy_socket.emit("register_player", {"nickname": "River"})
+        registrations = self.events_named(legacy_socket, "register_response")
+        self.assertNotEqual(registrations[-1]["player_id"], host["id"])
+
+        legacy_socket.emit("join_table", {"table_id": room["id"]})
+        errors = self.events_named(legacy_socket, "error")
+        self.assertEqual(errors[-1]["message"], "房间不存在")
+
     def test_authenticated_join_ignores_forged_player_id_and_emits_private_snapshot(self):
         host_client, host, room = self.create_room()
         socket_client = self.app_module.socketio.test_client(
@@ -90,6 +104,59 @@ class V1SocketTestCase(unittest.TestCase):
 
         self.assertEqual([error["code"] for error in errors], ["host_required", "host_required"])
         self.assertEqual(host_client.get(f"/api/v1/rooms/{room['join_code']}").status_code, 200)
+
+    def test_revoked_cookie_invalidates_an_existing_socket(self):
+        host_client, _, room = self.create_room()
+        socket_client = self.app_module.socketio.test_client(
+            self.app_module.app, flask_test_client=host_client
+        )
+        socket_client.emit("room:join", {"join_code": room["join_code"]})
+        socket_client.get_received()
+        host_client.delete("/api/v1/guest-sessions/current")
+
+        socket_client.emit("bot:add", {"level": "beginner"})
+        errors = self.events_named(socket_client, "error")
+
+        self.assertEqual(errors[-1]["code"], "auth_required")
+
+    def test_round_vote_is_rejected_while_hand_is_active(self):
+        host_client, _, room = self.create_room()
+        guest_client, _ = self.guest_client("Guest")
+        guest_client.post(f"/api/v1/rooms/{room['join_code']}/join", json={"position": 1})
+        host_socket = self.app_module.socketio.test_client(
+            self.app_module.app, flask_test_client=host_client
+        )
+        host_socket.emit("room:join", {"join_code": room["join_code"]})
+        host_socket.get_received()
+        host_socket.emit("hand:start", {})
+        host_socket.get_received()
+
+        host_socket.emit("round:vote", {})
+        errors = self.events_named(host_socket, "error")
+
+        self.assertEqual(errors[-1]["code"], "vote_unavailable")
+
+    def test_bot_first_action_pushes_a_fresh_v1_snapshot(self):
+        host_client, host, room = self.create_room()
+        host_socket = self.app_module.socketio.test_client(
+            self.app_module.app, flask_test_client=host_client
+        )
+        host_socket.emit("room:join", {"join_code": room["join_code"]})
+        host_socket.get_received()
+        host_socket.emit("bot:add", {"level": "beginner"})
+        host_socket.get_received()
+
+        table = self.app_module.tables[room["id"]]
+        table.dealer_id = host["id"]
+        table.hand_number = 1
+        host_socket.emit("hand:start", {})
+        host_socket.get_received()
+        self.app_module.socketio.sleep(1.2)
+
+        events = host_socket.get_received()
+        pushed = [event for event in events if event["name"] in ("turn:changed", "hand:completed")]
+        self.assertTrue(pushed)
+        self.assertIn("table", pushed[-1]["args"][0])
 
     def test_socket_cannot_act_without_room_membership(self):
         _, _, room = self.create_room()
@@ -132,6 +199,35 @@ class V1SocketTestCase(unittest.TestCase):
         self.assertEqual(snapshots[-1]["viewer_id"], host["id"])
         self.assertEqual(len(own["hole_cards"]), 2)
 
+    def test_reconnect_does_not_resurrect_a_folded_player(self):
+        host_client, host, room = self.create_room()
+        guest_client, _ = self.guest_client("Guest")
+        guest_client.post(f"/api/v1/rooms/{room['join_code']}/join", json={"position": 1})
+        host_socket = self.app_module.socketio.test_client(
+            self.app_module.app, flask_test_client=host_client
+        )
+        guest_socket = self.app_module.socketio.test_client(
+            self.app_module.app, flask_test_client=guest_client
+        )
+        host_socket.emit("room:join", {"join_code": room["join_code"]})
+        guest_socket.emit("room:join", {"join_code": room["join_code"]})
+        host_socket.get_received()
+        guest_socket.get_received()
+        host_socket.emit("hand:start", {})
+        host_socket.get_received()
+        host_socket.emit("player:act", {"action": "fold"})
+        host_socket.get_received()
+        host_socket.disconnect()
+
+        reconnected = self.app_module.socketio.test_client(
+            self.app_module.app, flask_test_client=host_client
+        )
+        reconnected.emit("room:join", {"join_code": room["join_code"]})
+        snapshots = self.events_named(reconnected, "room:snapshot")
+        own = next(player for player in snapshots[-1]["table"]["players"] if player["id"] == host["id"])
+
+        self.assertNotEqual(own["status"], "playing")
+
     def test_expired_host_disconnect_transfers_host_to_first_human(self):
         _host_client, host, room = self.create_room()
         guest_client, guest = self.guest_client("Guest")
@@ -160,6 +256,22 @@ class V1SocketTestCase(unittest.TestCase):
         record = self.app_module.db.get_table(room["id"])
         self.assertIsNotNone(record)
         self.assertEqual(record["host_id"], guest["id"])
+
+    def test_background_host_cleanup_can_broadcast_without_request_context(self):
+        host_client, host, room = self.create_room()
+        guest_client, guest = self.guest_client("Guest")
+        guest_client.post(f"/api/v1/rooms/{room['join_code']}/join", json={"position": 1})
+        guest_socket = self.app_module.socketio.test_client(
+            self.app_module.app, flask_test_client=guest_client
+        )
+        guest_socket.emit("room:join", {"join_code": room["join_code"]})
+        guest_socket.get_received()
+
+        self.app_module._finalize_v1_disconnect(host["id"], room["id"])
+
+        snapshots = self.events_named(guest_socket, "room:snapshot")
+        self.assertTrue(snapshots)
+        self.assertEqual(snapshots[-1]["room"]["host"]["id"], guest["id"])
 
 
 if __name__ == "__main__":

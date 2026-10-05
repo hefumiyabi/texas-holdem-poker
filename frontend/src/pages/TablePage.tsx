@@ -4,6 +4,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import type { Socket } from 'socket.io-client'
 import { ActionRail } from '../components/ActionRail'
 import { ConnectionBanner } from '../components/ConnectionBanner'
+import { InfoDrawer } from '../components/InfoDrawer'
 import { PlayerSeat } from '../components/PlayerSeat'
 import { PlayingCard } from '../components/PlayingCard'
 import { SettingsDrawer } from '../components/SettingsDrawer'
@@ -21,7 +22,7 @@ const seatPositions = [
 
 export function TablePage({ preferences, onPreferences }: { preferences: Preferences; onPreferences: (preferences: Preferences) => void }) {
   const language = preferences.language; const { code = '' } = useParams(); const navigate = useNavigate()
-  const [state, dispatch] = useReducer(tableReducer, initialTableState); const [settings, setSettings] = useState(false); const [copied, setCopied] = useState(false); const [socket, setSocket] = useState<Socket | null>(null)
+  const [state, dispatch] = useReducer(tableReducer, initialTableState); const [settings, setSettings] = useState(false); const [panel, setPanel] = useState<'analysis' | 'history' | null>(null); const [copied, setCopied] = useState(false); const [socket, setSocket] = useState<Socket | null>(null)
   useEffect(() => {
     const connection = createPokerSocket(); setSocket(connection)
     const snapshot = (payload: RoomSnapshot) => dispatch({ type: 'snapshot', snapshot: payload })
@@ -45,6 +46,10 @@ export function TablePage({ preferences, onPreferences }: { preferences: Prefere
   const share = async () => { const url = snapshot?.room.invite_url || window.location.origin + `/room/${code.toUpperCase()}`; try { if (navigator.share) await navigator.share({ title: snapshot?.room.title, url }); else await navigator.clipboard.writeText(url); setCopied(true); window.setTimeout(() => setCopied(false), 1600) } catch { /* user cancelled */ } }
   if (!table || !snapshot || !viewer) return <main className="table-shell loading-table"><Spade weight="fill"/><p>{state.error || translate(language, 'loading')}</p><button onClick={() => navigate('/')}>{translate(language, 'back')}</button></main>
   const isTurn = table.current_player_id === snapshot.viewer_id
+  const botPractice = table.players.filter((player) => !player.is_bot).length === 1
+  const panelLines = panel === 'analysis'
+    ? [translate(language, 'analysisHint'), `${translate(language, 'pot')}: ${table.pot.toLocaleString()}`, `${translate(language, 'players')}: ${table.players.length}`, table.game_stage.replace('_', ' ').toUpperCase()]
+    : [state.lastAction || translate(language, 'noHistory'), `#${table.hand_number || 0} · ${table.game_stage.replace('_', ' ').toUpperCase()}`]
   return <main className={`table-shell ${preferences.reducedMotion ? 'reduce-motion' : ''}`}>
     <ConnectionBanner status={state.connection} language={language}/>
     <header className="table-topbar">
@@ -71,7 +76,8 @@ export function TablePage({ preferences, onPreferences }: { preferences: Prefere
       {snapshot.room.is_host && <><button onClick={() => socket?.emit('bot:add', { level: 'beginner' })}><UserPlus/>{translate(language, 'addBot')}</button><button className="gold-button" disabled={!table.can_start} onClick={() => socket?.emit('hand:start')}><Spade weight="fill"/>{translate(language, 'startHand')}</button></>}
       {!snapshot.room.is_host && <p>{translate(language, 'waiting')}</p>}
     </div> : table.game_stage === 'finished' ? <div className="host-controls"><button className="gold-button" onClick={() => socket?.emit('round:vote')}><Spade/>{translate(language, 'nextHand')}</button></div> : <ActionRail language={language} table={table} player={viewer} enabled={isTurn} onAct={act}/>} 
-    <nav className="table-tools" aria-label="Table tools"><button><ChartDonut/><span>{translate(language, 'analysis')}</span></button><button><ListBullets/><span>{translate(language, 'history')}</span></button><button onClick={share}><ShareNetwork/><span>{translate(language, 'share')}</span></button><button onClick={() => setSettings(true)}><GearSix/><span>{translate(language, 'settings')}</span></button></nav>
+    <nav className="table-tools" aria-label="Table tools"><button disabled={!botPractice} title={!botPractice ? translate(language, 'practiceOnly') : undefined} onClick={() => setPanel('analysis')}><ChartDonut/><span>{translate(language, 'analysis')}</span></button><button onClick={() => setPanel('history')}><ListBullets/><span>{translate(language, 'history')}</span></button><button onClick={share}><ShareNetwork/><span>{translate(language, 'share')}</span></button><button onClick={() => setSettings(true)}><GearSix/><span>{translate(language, 'settings')}</span></button></nav>
+    {panel && <InfoDrawer title={translate(language, panel)} lines={panelLines} closeLabel={translate(language, 'close')} onClose={() => setPanel(null)}/>}
     {settings && <SettingsDrawer preferences={preferences} onChange={onPreferences} onClose={() => setSettings(false)}/>} 
   </main>
 }

@@ -3,7 +3,7 @@ export type PokerAction = 'fold' | 'check' | 'call' | 'bet' | 'raise' | 'all_in'
 export function getLegalActions({ currentBet, playerBet, chips }: { currentBet: number; playerBet: number; chips: number }): PokerAction[] {
   if (chips <= 0) return []
   return currentBet <= playerBet
-    ? ['fold', 'check', 'bet', 'all_in']
+    ? ['fold', 'check', currentBet > 0 ? 'raise' : 'bet', 'all_in']
     : ['fold', 'call', 'raise', 'all_in']
 }
 
@@ -16,4 +16,3 @@ export function getBetPresets({ pot, min, max }: { pot: number; min: number; max
     { label: 'MAX', amount: max },
   ]
 }
-

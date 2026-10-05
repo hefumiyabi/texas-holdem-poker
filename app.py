@@ -47,7 +47,7 @@ import time
 import re
 import traceback
 from typing import Dict, List, Optional
-from flask import Flask, request, jsonify, render_template, make_response, send_from_directory
+from flask import Flask, request, jsonify, render_template, make_response, send_from_directory, has_request_context
 from flask_socketio import SocketIO, emit, join_room, leave_room, rooms
 from werkzeug.middleware.proxy_fix import ProxyFix
 import threading
@@ -503,13 +503,35 @@ def _room_details(record: Dict, current_player_id: str) -> Dict:
     payload = _room_preview(record)
     host_id = record.get('host_id') or record['created_by']
     host = db.get_user(host_id)
+    configured_base = os.environ.get('POKER_PUBLIC_URL', '').rstrip('/')
+    if not configured_base and has_request_context():
+        configured_base = request.url_root.rstrip('/')
+    if not configured_base and _allowed_origins:
+        configured_base = _allowed_origins[0].rstrip('/')
     payload.update({
         'id': record['id'],
         'host': {'id': host_id, 'nickname': host['nickname']} if host else None,
         'is_host': current_player_id == host_id,
-        'invite_url': request.url_root.rstrip('/') + '/room/' + record['join_code'],
+        'invite_url': configured_base + '/room/' + record['join_code'],
     })
     return payload
+
+
+def _is_v1_private_room(table_id: str) -> bool:
+    """Keep invite-only v1 rooms completely outside the legacy surface."""
+    record = db.get_table(table_id)
+    return bool(record and record.get('join_code'))
+
+
+def _reject_legacy_private_room(table_id: str) -> bool:
+    if not _is_v1_private_room(table_id):
+        return False
+    emit('error', {'message': '房间不存在'})
+    return True
+
+
+def _is_v1_private_player(player_id: str) -> bool:
+    return any(_is_v1_private_room(table_id) for table_id in db.get_player_table_ids(player_id))
 
 
 # REST API 路由
@@ -693,7 +715,7 @@ def legacy_lobby():
 
 @app.route('/legacy/table/<table_id>')
 def legacy_table_page(table_id):
-    if table_id not in tables:
+    if table_id not in tables or _is_v1_private_room(table_id):
         return "牌桌不存在", 404
     return render_template('table.html', table_id=table_id)
 
@@ -711,17 +733,9 @@ def join_game():
                 'message': '昵称无效。请使用2-20个字符，仅包含字母、数字、中文和基本符号。'
             }), 400
         
-        # 检查是否已存在该昵称的用户
-        existing_user = db.get_user_by_nickname(nickname)
-        
-        if existing_user:
-            # 用户已存在，返回现有用户信息
-            player_id = existing_user['id']
-            print(f"用户 {nickname} 已存在，ID: {player_id}")
-        else:
-            # 创建新用户
-            player_id = db.create_user(nickname)
-            print(f"创建新用户 {nickname}，ID: {player_id}")
+        # 昵称不是身份。旧版入口也必须每次创建独立玩家，
+        # 不能通过重复昵称取得现代私密房中玩家的 ID。
+        player_id = db.create_user(nickname)
         
         # 更新用户活动时间
         db.update_user_activity(player_id)
@@ -770,6 +784,8 @@ def get_tables():
         # 转换为前端需要的格式
         tables_data = []
         for table_data in db_tables:
+            if table_data.get('join_code'):
+                continue
             # 同步内存中的Table对象
             table_id = table_data['id']
             if table_id not in tables:
@@ -856,6 +872,8 @@ def get_stats():
 @app.route('/api/showdown_history/<table_id>', methods=['GET'])
 def get_showdown_history(table_id):
     """获取牌桌的摊牌历史记录"""
+    if _is_v1_private_room(table_id):
+        return jsonify({'success': False, 'message': '房间不存在'}), 404
     try:
         from game_logger import game_logger
         
@@ -923,6 +941,8 @@ def get_showdown_history(table_id):
 @app.route('/api/player_showdown_summary/<player_id>', methods=['GET'])
 def get_player_showdown_summary(player_id):
     """获取玩家摊牌统计摘要"""
+    if _is_v1_private_player(player_id):
+        return jsonify({'success': False, 'message': '玩家不存在'}), 404
     try:
         from game_logger import game_logger
         
@@ -992,6 +1012,8 @@ def get_player_showdown_summary(player_id):
 @app.route('/api/player_showdown_history/<player_id>', methods=['GET'])
 def get_player_showdown_history(player_id):
     """获取玩家摊牌历史记录"""
+    if _is_v1_private_player(player_id):
+        return jsonify({'success': False, 'message': '玩家不存在'}), 404
     try:
         from game_logger import game_logger
         limit = request.args.get('limit', 10, type=int)
@@ -1054,6 +1076,8 @@ def api_card_tracking():
         player_id = data.get('player_id')
         if not table_id or not player_id:
             return jsonify({'success': False, 'message': '参数缺失'}), 400
+        if _is_v1_private_room(table_id):
+            return jsonify({'success': False, 'message': '房间不存在'}), 404
 
         # 校验玩家是否有权限
         player_data = db.get_user(player_id)
@@ -1084,6 +1108,8 @@ def api_win_probability():
         player_id = data.get('player_id')
         if not table_id or not player_id:
             return jsonify({'success': False, 'message': '参数缺失'}), 400
+        if _is_v1_private_room(table_id):
+            return jsonify({'success': False, 'message': '房间不存在'}), 404
 
         # 获取内存中的Table对象
         table = tables.get(table_id)
@@ -1141,7 +1167,7 @@ def handle_disconnect():
         if v1_session and v1_session.get('table_id'):
             table = tables.get(v1_session['table_id'])
             player = table.get_player(v1_session['player_id']) if table else None
-            if player and player.status != PlayerStatus.BROKE:
+            if player and player.status in (PlayerStatus.PLAYING, PlayerStatus.WAITING):
                 player.status = PlayerStatus.DISCONNECTED
                 _emit_v1_snapshots(v1_session['table_id'])
             if not app.config.get('TESTING'):
@@ -1274,12 +1300,16 @@ def _finalize_v1_disconnect(player_id: str, table_id: str):
 
 
 def _v1_session() -> Optional[Dict]:
-    session = v1_socket_sessions.get(request.sid)
-    if session:
-        return session
     guest = _authenticated_guest()
     if not guest:
+        v1_socket_sessions.pop(request.sid, None)
         return None
+    session = v1_socket_sessions.get(request.sid)
+    if session:
+        if session.get('player_id') != guest['player_id']:
+            v1_socket_sessions.pop(request.sid, None)
+            return None
+        return session
     session = {
         'player_id': guest['player_id'],
         'nickname': guest['nickname'],
@@ -1437,10 +1467,11 @@ def handle_v1_hand_start(_data=None):
     if not table.start_new_hand():
         _v1_error('not_enough_players', '至少需要两名有筹码的玩家')
         return
+    next_round_votes[record['id']] = set()
     _emit_v1_snapshots(record['id'], 'hand:started')
     _emit_v1_snapshots(record['id'], 'turn:changed')
     if table.get_current_player() and table.get_current_player().is_bot:
-        socketio.start_background_task(process_bot_actions, record['id'])
+        socketio.start_background_task(process_bot_actions_delayed, record['id'], 0)
 
 
 @socketio.on('player:act')
@@ -1493,6 +1524,9 @@ def handle_v1_round_vote(_data=None):
     if not context:
         return
     session, record, table = context
+    if table.game_stage != GameStage.FINISHED:
+        _v1_error('vote_unavailable', '只能在本局结束后投票')
+        return
     votes = next_round_votes.setdefault(record['id'], set())
     votes.add(session['player_id'])
     human_ids = {player.id for player in table.players if not player.is_bot and player.chips > 0}
@@ -1544,18 +1578,16 @@ def handle_register_player(data):
             
             print(f"玩家 {nickname} 旧会话已清理")
         
-        # 创建或获取玩家数据
-        player_data = db.get_user_by_nickname(nickname)
-        if not player_data:
-            # 使用database.py的create_user方法创建用户
-            player_id = db.create_user(nickname)
-            player_data = db.get_user(player_id)
+        # 昵称只是展示名，不能作为身份恢复凭据。
+        player_id = db.create_user(nickname)
+        player_data = db.get_user(player_id)
         
         if not player_data:
             emit('error', {'message': '玩家创建失败'})
             return
         
         # 注册会话
+        nickname = player_data['nickname']
         session_id = request.sid
         player_sessions[session_id] = {
             'player_id': player_data['id'],
@@ -1787,6 +1819,9 @@ def handle_join_table(data):
         if not table_id:
             emit('error', {'message': '房间ID无效'})
             return
+
+        if _reject_legacy_private_room(table_id):
+            return
         
         # 检查房间是否存在，先从内存检查，再从数据库检查
         table = tables.get(table_id)
@@ -1988,6 +2023,9 @@ def handle_get_table_state(data):
         if not table_id:
             emit('error', {'message': '房间ID无效'})
             return
+
+        if _reject_legacy_private_room(table_id):
+            return
         
         # 检查房间是否存在
         table = tables.get(table_id)
@@ -2048,6 +2086,9 @@ def handle_add_bot(data):
         
         if not table_id or table_id not in tables:
             emit('error', {'message': '您不在任何房间中'})
+            return
+
+        if _reject_legacy_private_room(table_id):
             return
         
         table = tables[table_id]
@@ -2142,6 +2183,9 @@ def handle_start_hand():
         if not table_id or table_id not in tables:
             emit('error', {'message': '您不在任何房间中'})
             return
+
+        if _reject_legacy_private_room(table_id):
+            return
         
         table = tables[table_id]
         
@@ -2210,6 +2254,8 @@ def handle_player_action(data):
         
         player_id = player_sessions[session_id]['player_id']
         table_id = session_tables[session_id]
+        if _reject_legacy_private_room(table_id):
+            return
         table = tables.get(table_id)
         
         if not table:
@@ -2314,6 +2360,8 @@ def handle_leave_table():
         
         player_id = player_sessions[session_id]['player_id']
         table_id = session_tables[session_id]
+        if _reject_legacy_private_room(table_id):
+            return
         table = tables.get(table_id)
         
         if table:
@@ -2366,6 +2414,9 @@ def handle_dissolve_table(data):
         table_id = data.get('table_id')
         if not table_id or table_id not in tables:
             emit('error', {'message': '房间不存在'})
+            return
+
+        if _reject_legacy_private_room(table_id):
             return
         
         player_id = player_sessions[session_id]['player_id']
@@ -2578,6 +2629,9 @@ def handle_vote_next_round(data):
             # 尝试从数据库恢复房间信息或提示用户
             emit('error', {'message': '房间不存在，请重新创建房间'})
             return
+
+        if _reject_legacy_private_room(table_id):
+            return
         
         table = tables[table_id]
         player_id = player_sessions[session_id]['player_id']
@@ -2699,7 +2753,14 @@ def process_bot_actions_delayed(table_id, delay=1):
     time.sleep(delay)
     if table_id in tables:
         print(f"🤖 开始处理机器人动作 (table_id: {table_id})")
-        process_bot_actions(table_id)
+        result = process_bot_actions(table_id)
+        if any(session.get('table_id') == table_id for session in v1_socket_sessions.values()):
+            event_name = (
+                'hand:completed'
+                if (result and result.get('hand_complete')) or tables[table_id].game_stage == GameStage.FINISHED
+                else 'turn:changed'
+            )
+            _emit_v1_snapshots(table_id, event_name)
 
 def handle_hand_end(table_id, winner, showdown_info):
     """处理手牌结束"""
@@ -2858,6 +2919,8 @@ def api_table_players():
     table_id = request.args.get('table_id')
     if not table_id:
         return jsonify({'success': False, 'message': '缺少table_id'}), 400
+    if _is_v1_private_room(table_id):
+        return jsonify({'success': False, 'message': '房间不存在'}), 404
     try:
         players = db.get_table_players(table_id)
         db_table = db.get_table(table_id)
@@ -2876,6 +2939,8 @@ def api_game_history():
     
     if not table_id:
         return jsonify({'success': False, 'message': '缺少table_id参数'}), 400
+    if _is_v1_private_room(table_id):
+        return jsonify({'success': False, 'message': '房间不存在'}), 404
     
     try:
         from game_logger import game_logger
