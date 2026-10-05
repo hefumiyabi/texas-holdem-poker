@@ -25,8 +25,7 @@ export function ActionRail({ language, table, player, enabled, onAct }: { langua
     </div>}
     <div className="action-rail" aria-label="Poker actions">
       <div className="turn-copy"><span className={enabled ? 'pulse-dot' : ''}/><strong>{enabled ? translate(language, 'yourTurn') : translate(language, 'spectating')}</strong></div>
-      <div className="action-buttons">{actions.filter((action) => action !== 'all_in').map((action) => <button key={action} disabled={!enabled} className={action === 'bet' || action === 'raise' ? 'gold-button' : ''} onClick={() => trigger(action)}><span>{label(action)}</span>{action === 'call' && <small>{Math.min(player.chips, Math.max(0, (table.current_bet || 0) - player.current_bet)).toLocaleString()}</small>}</button>)}</div>
+      <div className="action-buttons">{actions.map((action) => <button key={action} disabled={!enabled} className={action === 'bet' || action === 'raise' ? 'gold-button' : action === 'all_in' ? 'all-in-button' : ''} onClick={() => trigger(action)}><span>{label(action)}</span>{action === 'call' && <small>{Math.min(player.chips, Math.max(0, (table.current_bet || 0) - player.current_bet)).toLocaleString()}</small>}</button>)}</div>
     </div>
   </>
 }
-

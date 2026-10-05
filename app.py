@@ -8,21 +8,39 @@ import hashlib
 import secrets
 from collections import defaultdict, deque
 from functools import wraps
+from urllib.parse import urlparse
 
-# 运行模式配置（可通过环境变量覆盖，便于 Android 内置服务器等场景）
-#   POKER_ASYNC_MODE: eventlet（默认，PC/局域网）或 threading（Android 单机，无 C 扩展依赖）
-#   POKER_HOST / POKER_PORT: 监听地址与端口（默认 0.0.0.0:8888）
-#   POKER_DEBUG: 是否开启 debug 模式（默认 true；Android 内置服务器必须为 false）
-POKER_ASYNC_MODE = os.environ.get('POKER_ASYNC_MODE', 'eventlet')
+def production_config_errors(environment=None):
+    """返回生产配置错误；本地开发不强制这些项。"""
+    env = environment if environment is not None else os.environ
+    if str(env.get('POKER_ENV', 'development')).lower() != 'production':
+        return []
+    errors = []
+    if len(str(env.get('POKER_SECRET_KEY', ''))) < 32:
+        errors.append('POKER_SECRET_KEY 必须至少 32 个字符')
+    origins = str(env.get('POKER_ALLOWED_ORIGINS', '')).strip()
+    parsed_origins = [urlparse(origin.strip()) for origin in origins.split(',') if origin.strip()]
+    if (not parsed_origins or '*' in origins or any(
+            parsed.scheme != 'https' or not parsed.netloc or parsed.path not in ('', '/')
+            or parsed.params or parsed.query or parsed.fragment
+            for parsed in parsed_origins)):
+        errors.append('POKER_ALLOWED_ORIGINS 必须是精确的 HTTPS 来源')
+    if str(env.get('POKER_COOKIE_SECURE', '')).lower() not in ('1', 'true', 'yes'):
+        errors.append('POKER_COOKIE_SECURE 在生产环境必须为 true')
+    if str(env.get('POKER_DEBUG', 'false')).lower() in ('1', 'true', 'yes'):
+        errors.append('POKER_DEBUG 在生产环境必须为 false')
+    return errors
+
+
+_production_errors = production_config_errors()
+if _production_errors:
+    raise RuntimeError('；'.join(_production_errors))
+
+
+POKER_ASYNC_MODE = os.environ.get('POKER_ASYNC_MODE', 'threading')
 POKER_HOST = os.environ.get('POKER_HOST', '0.0.0.0')
-POKER_PORT = int(os.environ.get('POKER_PORT', '8888'))
-POKER_DEBUG = os.environ.get('POKER_DEBUG', 'true').lower() in ('1', 'true', 'yes')
-
-# ⚠️ eventlet 模式必须在导入其他库之前完成 monkey patch，
-# 否则 time.sleep 等调用会阻塞整个服务器（所有玩家连接卡死）
-if POKER_ASYNC_MODE == 'eventlet':
-    import eventlet
-    eventlet.monkey_patch()
+POKER_PORT = int(os.environ.get('PORT', os.environ.get('POKER_PORT', '8888')))
+POKER_DEBUG = os.environ.get('POKER_DEBUG', 'false').lower() in ('1', 'true', 'yes')
 
 import uuid
 import time
@@ -31,6 +49,7 @@ import traceback
 from typing import Dict, List, Optional
 from flask import Flask, request, jsonify, render_template, make_response, send_from_directory
 from flask_socketio import SocketIO, emit, join_room, leave_room, rooms
+from werkzeug.middleware.proxy_fix import ProxyFix
 import threading
 import sqlite3
 from datetime import datetime
@@ -55,6 +74,7 @@ from player_persistence import update_player_chips, get_player
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('POKER_SECRET_KEY') or secrets.token_hex(32)
 app.config['POKER_COOKIE_SECURE'] = os.environ.get('POKER_COOKIE_SECURE', 'false').lower() in ('1', 'true', 'yes')
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 _configured_origins = os.environ.get('POKER_ALLOWED_ORIGINS', '').strip()
 _allowed_origins = [origin.strip() for origin in _configured_origins.split(',') if origin.strip()] or None
 socketio = SocketIO(app, cors_allowed_origins=_allowed_origins, async_mode=POKER_ASYNC_MODE,
@@ -493,6 +513,10 @@ def _room_details(record: Dict, current_player_id: str) -> Dict:
 
 
 # REST API 路由
+
+@app.route('/healthz')
+def healthz():
+    return jsonify({'status': 'ok'})
 
 @app.route('/api/v1/guest-sessions', methods=['POST'])
 @_rate_limited('guest-session', 10)
@@ -1336,13 +1360,11 @@ def handle_v1_room_leave(_data=None):
     context = _v1_room_context()
     if not context:
         return
-    session, record, table = context
-    table.remove_player(session['player_id'])
-    db.leave_table(record['id'], session['player_id'])
+    session, record, _table = context
     leave_room(record['id'])
     session.update({'table_id': None, 'join_code': None})
     emit('room:left', {'join_code': record['join_code']})
-    _emit_v1_snapshots(record['id'])
+    _finalize_v1_disconnect(session['player_id'], record['id'])
 
 
 @socketio.on('room:dissolve')

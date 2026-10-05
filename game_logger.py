@@ -7,14 +7,15 @@
 import sqlite3
 import json
 import time
+from runtime_paths import data_file
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 
 class GameLogger:
     """游戏日志记录器"""
     
-    def __init__(self, db_path: str = 'game_logs.db'):
-        self.db_path = db_path
+    def __init__(self, db_path: Optional[str] = None):
+        self.db_path = db_path or data_file('game_logs.db')
         self.init_database()
     
     def get_connection(self):
@@ -431,4 +432,4 @@ def log_player_action(hand_id: int, player_id: str, nickname: str, action: str,
 
 def log_stage_change(hand_id: int, stage: str, pot: int, current_bet: int, community_cards: List):
     """记录阶段变化"""
-    game_logger.update_hand_stage(hand_id, stage, pot, current_bet, community_cards) 
+    game_logger.update_hand_stage(hand_id, stage, pot, current_bet, community_cards)

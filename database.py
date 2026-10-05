@@ -5,10 +5,11 @@ import json
 from typing import Optional, Dict, List, Any
 import threading
 from contextlib import contextmanager
+from runtime_paths import data_file
 
 class PokerDatabase:
-    def __init__(self, db_path: str = 'poker_game.db'):
-        self.db_path = db_path
+    def __init__(self, db_path: Optional[str] = None):
+        self.db_path = db_path or data_file('poker_game.db')
         self.lock = threading.Lock()
         self.init_database()
     

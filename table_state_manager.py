@@ -11,6 +11,7 @@ import threading
 from typing import Dict, List, Optional, Callable
 from datetime import datetime, timedelta
 from enum import Enum
+from runtime_paths import data_file
 
 class TableStateChange(Enum):
     """牌桌状态变化类型"""
@@ -25,8 +26,8 @@ class TableStateChange(Enum):
 class TableStateManager:
     """牌桌状态管理器"""
     
-    def __init__(self, db_path: str = "table_states.db"):
-        self.db_path = db_path
+    def __init__(self, db_path: Optional[str] = None):
+        self.db_path = db_path or data_file('table_states.db')
         self.state_callbacks: Dict[str, List[Callable]] = {}
         self.monitoring_active = True
         self.check_interval = 2  # 每2秒检查一次状态
@@ -368,4 +369,4 @@ def register_restart_callback(table_id: str, callback: Callable):
 
 def mark_restart_completed(table_id: str, hand_number: int, success: bool = True):
     """标记重启完成的便捷函数"""
-    table_state_manager.mark_restart_completed(table_id, hand_number, success) 
+    table_state_manager.mark_restart_completed(table_id, hand_number, success)

@@ -145,6 +145,22 @@ class V1SocketTestCase(unittest.TestCase):
         self.assertEqual(record["host_id"], guest["id"])
         self.assertNotIn(host["id"], [row["player_id"] for row in self.app_module.db.get_table_players(table_id)])
 
+    def test_host_leave_transfers_control_immediately(self):
+        host_client, _host, room = self.create_room()
+        guest_client, guest = self.guest_client("Guest")
+        guest_client.post(f"/api/v1/rooms/{room['join_code']}/join", json={"position": 1})
+        host_socket = self.app_module.socketio.test_client(
+            self.app_module.app, flask_test_client=host_client
+        )
+        host_socket.emit("room:join", {"join_code": room["join_code"]})
+        host_socket.get_received()
+
+        host_socket.emit("room:leave", {})
+
+        record = self.app_module.db.get_table(room["id"])
+        self.assertIsNotNone(record)
+        self.assertEqual(record["host_id"], guest["id"])
+
 
 if __name__ == "__main__":
     unittest.main()

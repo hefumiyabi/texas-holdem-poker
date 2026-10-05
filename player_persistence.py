@@ -10,14 +10,15 @@ import uuid
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 from enum import Enum
+from runtime_paths import data_file
 
 class PlayerType(Enum):
     HUMAN = "human"
     BOT = "bot"
 
 class PlayerPersistence:
-    def __init__(self, db_path: str = "players.db"):
-        self.db_path = db_path
+    def __init__(self, db_path: Optional[str] = None):
+        self.db_path = db_path or data_file('players.db')
         self.init_database()
     
     def init_database(self):
@@ -397,4 +398,4 @@ def get_player_by_nickname(nickname: str) -> Optional[Dict]:
     return player_persistence.get_player_by_nickname(nickname)
 
 def get_available_bots(level: str = None, limit: int = 10) -> List[Dict]:
-    return player_persistence.get_available_bots(level, limit) 
+    return player_persistence.get_available_bots(level, limit)

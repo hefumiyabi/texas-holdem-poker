@@ -14,6 +14,12 @@ A web-based multiplayer Texas Hold'em game built with Flask + Socket.IO — play
 >
 > 🔱 Forked from the [original project](https://github.com/stars1210JasonHe/texas-holdem-poker) by [Jason He](https://github.com/stars1210JasonHe) and maintained by [JFRedist](https://github.com/JFRedist). See the [CHANGELOG](CHANGELOG.md) for what's new in this fork.
 
+## Modern Web V1
+
+当前版本已升级为手机优先的 React + TypeScript 私密牌室：安全游客 Cookie、6 位房间码、邀请链接、断线恢复、机器人、双语界面和无滚动的移动牌桌。旧版界面在迁移期间保留于 `/legacy/`。
+
+The current release is a mobile-first React + TypeScript private poker room with secure guest cookies, six-character invite codes, reconnect recovery, bots, bilingual UI, and a no-scroll mobile table. The previous interface remains at `/legacy/` during migration.
+
 [中文](#中文) | [English](#english)
 
 ---
@@ -44,7 +50,7 @@ A web-based multiplayer Texas Hold'em game built with Flask + Socket.IO — play
 
 ### 🚀 快速开始
 
-环境要求：Python 3.8+（Python 3.13 需要 `pip install "eventlet>=0.37"`）和一个现代浏览器。
+环境要求：Node.js 22+ 、Python 3.12 和一个现代浏览器。
 
 ```bash
 git clone https://github.com/JFRedist/texas-holdem-poker.git
@@ -57,6 +63,8 @@ poker_env\Scripts\activate
 source poker_env/bin/activate
 
 pip install -r requirements.txt
+npm --prefix frontend ci
+npm --prefix frontend run build
 python app.py
 ```
 
@@ -70,8 +78,12 @@ python app.py
 | --- | --- | --- |
 | `POKER_HOST` | `0.0.0.0` | 监听地址 |
 | `POKER_PORT` | `8888` | 监听端口 |
-| `POKER_DEBUG` | `true` | 是否开启 Flask debug 模式 |
-| `POKER_ASYNC_MODE` | `eventlet` | Socket.IO 异步模式；无法安装 eventlet 的环境（如 Android 内置服务器）可设为 `threading` |
+| `POKER_DEBUG` | `false` | 是否开启 Flask debug 模式 |
+| `POKER_ASYNC_MODE` | `threading` | Socket.IO 运行模式 |
+| `POKER_DATA_DIR` | 当前目录 | 所有 SQLite 文件的统一目录 |
+| `POKER_SECRET_KEY` | 开发时随机 | 生产环境必须设置的 32+ 字符密钥 |
+| `POKER_ALLOWED_ORIGINS` | 同源 | 生产环境的精确 HTTPS 来源 |
+| `POKER_COOKIE_SECURE` | `false` | 生产环境必须为 `true` |
 
 ### 🎮 游戏指南
 
@@ -107,12 +119,14 @@ python app.py
 
 ### 🌐 部署
 
+`render.yaml` 和 `Dockerfile` 可直接用于 Render 付费单实例。创建 Blueprint 后，如果修改了服务名，必须同步把 `POKER_ALLOWED_ORIGINS` 改为实际的 `https://<service>.onrender.com`。磁盘挂载在 `/var/data`，健康检查为 `/healthz`。
+
 ```bash
-pip install gunicorn
-gunicorn --worker-class eventlet -w 1 --bind 0.0.0.0:8888 app:app
+docker build -t riverlight-poker .
+docker run --rm -p 10000:10000 -e PORT=10000 -e POKER_DATA_DIR=/var/data -v poker-data:/var/data riverlight-poker
 ```
 
-只能使用单个 worker（`-w 1`），因为游戏状态保存在进程内存中。反向代理需要支持 WebSocket，Nginx 配置示例见 [English 部分](#-deployment)。
+生产环境使用单个 Gunicorn worker 和线程模式，因为当前牌局状态仍在单进程内存中。部署前请备份 `/var/data`。
 
 ### 🤝 参与贡献
 
@@ -153,7 +167,7 @@ gunicorn --worker-class eventlet -w 1 --bind 0.0.0.0:8888 app:app
 
 ### 🚀 Quick Start
 
-Requirements: Python 3.8+ (on Python 3.13, run `pip install "eventlet>=0.37"`) and a modern browser.
+Requirements: Node.js 22+, Python 3.12, and a modern browser.
 
 ```bash
 git clone https://github.com/JFRedist/texas-holdem-poker.git
@@ -166,6 +180,8 @@ poker_env\Scripts\activate
 source poker_env/bin/activate
 
 pip install -r requirements.txt
+npm --prefix frontend ci
+npm --prefix frontend run build
 python app.py
 ```
 
@@ -179,8 +195,12 @@ Open <http://localhost:8888> and enter a nickname. The server prints a "📱 局
 | --- | --- | --- |
 | `POKER_HOST` | `0.0.0.0` | Bind address |
 | `POKER_PORT` | `8888` | Port |
-| `POKER_DEBUG` | `true` | Enable Flask debug mode |
-| `POKER_ASYNC_MODE` | `eventlet` | Socket.IO async mode; use `threading` where eventlet can't be installed (e.g. an embedded Android server) |
+| `POKER_DEBUG` | `false` | Enable Flask debug mode |
+| `POKER_ASYNC_MODE` | `threading` | Socket.IO runtime mode |
+| `POKER_DATA_DIR` | current directory | Shared directory for every SQLite file |
+| `POKER_SECRET_KEY` | random in development | Required 32+ character production secret |
+| `POKER_ALLOWED_ORIGINS` | same origin | Exact production HTTPS origin |
+| `POKER_COOKIE_SECURE` | `false` | Must be `true` in production |
 
 ### 🎮 Game Guide
 
@@ -216,12 +236,16 @@ Open <http://localhost:8888> and enter a nickname. The server prints a "📱 局
 
 ### 🌐 Deployment
 
+Use the included `render.yaml` and `Dockerfile` for a paid, single-instance Render service. If the service name changes, update `POKER_ALLOWED_ORIGINS` to the exact deployed HTTPS origin. The persistent disk is mounted at `/var/data`; the health endpoint is `/healthz`.
+
 ```bash
-pip install gunicorn
-gunicorn --worker-class eventlet -w 1 --bind 0.0.0.0:8888 app:app
+docker build -t riverlight-poker .
+docker run --rm -p 10000:10000 -e PORT=10000 -e POKER_DATA_DIR=/var/data -v poker-data:/var/data riverlight-poker
 ```
 
-Use a single worker (`-w 1`): game state lives in process memory. Example Nginx config with WebSocket support:
+Use one Gunicorn worker: live game state remains process-local in this release. Back up `/var/data` before releases. A reverse proxy must support WebSocket upgrades.
+
+Example Nginx configuration:
 
 ```nginx
 server {

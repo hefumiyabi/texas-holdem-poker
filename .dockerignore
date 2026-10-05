@@ -1,0 +1,13 @@
+.git
+.github
+.env
+**/__pycache__
+**/*.pyc
+*.db
+*.sqlite*
+frontend/node_modules
+frontend/dist
+.superpowers
+tests
+work
+

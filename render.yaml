@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: riverlight-poker
+    runtime: docker
+    plan: 0.5c-512mb
+    numInstances: 1
+    healthCheckPath: /healthz
+    autoDeployTrigger: commit
+    envVars:
+      - key: POKER_ENV
+        value: production
+      - key: POKER_ASYNC_MODE
+        value: threading
+      - key: POKER_DEBUG
+        value: "false"
+      - key: POKER_COOKIE_SECURE
+        value: "true"
+      - key: POKER_DATA_DIR
+        value: /var/data
+      - key: POKER_ALLOWED_ORIGINS
+        value: https://riverlight-poker.onrender.com
+      - key: POKER_SECRET_KEY
+        generateValue: true
+    disk:
+      name: poker-data
+      mountPath: /var/data
+      sizeGB: 1
