@@ -29,7 +29,7 @@ import time
 import re
 import traceback
 from typing import Dict, List, Optional
-from flask import Flask, request, jsonify, render_template, make_response
+from flask import Flask, request, jsonify, render_template, make_response, send_from_directory
 from flask_socketio import SocketIO, emit, join_room, leave_room, rooms
 import threading
 import sqlite3
@@ -629,21 +629,46 @@ def join_private_room_v1(guest, join_code):
         'room': _room_details(record, guest['player_id']),
     })
 
+FRONTEND_DIST = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'frontend', 'dist')
+
+
+def _serve_modern_frontend():
+    """返回 React SPA 入口，由前端路由处理入口、房间与牌桌页。"""
+    index_path = os.path.join(FRONTEND_DIST, 'index.html')
+    if not os.path.isfile(index_path):
+        return jsonify({
+            'success': False,
+            'message': '前端尚未构建，请先运行 npm --prefix frontend run build',
+        }), 503
+    return send_from_directory(FRONTEND_DIST, 'index.html')
+
+
 @app.route('/')
-def index():
-    """主页"""
+@app.route('/room/<join_code>')
+@app.route('/table/<join_code>')
+def modern_frontend(join_code=None):
+    return _serve_modern_frontend()
+
+
+@app.route('/assets/<path:filename>')
+def modern_assets(filename):
+    return send_from_directory(os.path.join(FRONTEND_DIST, 'assets'), filename)
+
+
+@app.route('/legacy/')
+def legacy_index():
+    """迁移期间保留的旧版入口。"""
     return render_template('index.html')
 
 
+@app.route('/legacy/lobby')
 @app.route('/lobby')
-def lobby():
-    """大厅页面"""
+def legacy_lobby():
     return render_template('lobby.html')
 
 
-@app.route('/table/<table_id>')
-def table_page(table_id):
-    """牌桌页面"""
+@app.route('/legacy/table/<table_id>')
+def legacy_table_page(table_id):
     if table_id not in tables:
         return "牌桌不存在", 404
     return render_template('table.html', table_id=table_id)
