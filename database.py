@@ -510,6 +510,25 @@ class PokerDatabase:
                 print(f"关闭房间: {table_id}")
                 return True
 
+    def transfer_table_host(self, table_id: str, player_id: str) -> bool:
+        """将私密房房主转移给仍在房间内的真人玩家。"""
+        with self.lock:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT 1 FROM table_players
+                    WHERE table_id = ? AND player_id = ? AND is_bot = 0
+                ''', (table_id, player_id))
+                if not cursor.fetchone():
+                    return False
+                cursor.execute('''
+                    UPDATE tables
+                    SET host_id = ?, created_by = ?, last_activity = ?
+                    WHERE id = ? AND is_active = 1
+                ''', (player_id, player_id, time.time(), table_id))
+                conn.commit()
+                return cursor.rowcount > 0
+
     def close_empty_tables(self):
         """关闭所有空房间和只有机器人的房间"""
         with self.lock:

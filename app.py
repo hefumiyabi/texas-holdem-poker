@@ -79,6 +79,7 @@ tables: Dict[str, Table] = {}
 players: Dict[str, Player] = {}
 player_sessions: Dict[str, str] = {}  # session_id -> player_id
 session_tables: Dict[str, str] = {}   # session_id -> table_id
+v1_socket_sessions: Dict[str, Dict] = {}  # 安全游客 Socket 会话
 
 # 游戏日志状态管理
 table_sessions: Dict[str, int] = {}   # table_id -> session_id (日志会话ID)
@@ -288,7 +289,6 @@ def handle_restart_needed(table_id: str, state_type, data: Dict):
                         break
                 
                 if player_session and len(player.hole_cards) == 2:
-                    print(f"📤 发送手牌给玩家: {player.nickname}")
                     socketio.emit('your_cards', {
                         'hole_cards': [card.to_dict() for card in player.hole_cards]
                     }, room=player_session)
@@ -301,17 +301,6 @@ def handle_restart_needed(table_id: str, state_type, data: Dict):
         
         print(f"房间 {table.title} 自动开始新手牌")
         
-        # 后台显示所有玩家的手牌
-        print("=" * 50)
-        print(f"🃏 新一轮玩家手牌信息 (手牌#{table.hand_number})：")
-        for i, player in enumerate(table.players):
-            if player.status == PlayerStatus.PLAYING and len(player.hole_cards) == 2:
-                card1 = player.hole_cards[0]
-                card2 = player.hole_cards[1]
-                card1_str = f"{card1.rank.symbol}{card1.suit.value}"
-                card2_str = f"{card2.rank.symbol}{card2.suit.value}"
-                player_type = "🤖" if player.is_bot else "👤"
-                print(f"  {player_type} {player.nickname}: {card1_str} {card2_str} (筹码: ${player.chips}, 状态: {player.status.value})")
         print(f"🎯 游戏阶段: {table.game_stage.value}")
         print(f"💰 当前底池: ${table.pot}")
         print(f"💵 当前投注: ${table.current_bet}")
@@ -1071,6 +1060,24 @@ def handle_connect():
     try:
         print(f"Client connected: {request.sid}")
         emit('connected', {'session_id': request.sid})
+        guest = _authenticated_guest()
+        if guest:
+            v1_socket_sessions[request.sid] = {
+                'player_id': guest['player_id'],
+                'nickname': guest['nickname'],
+                'table_id': None,
+                'join_code': None,
+            }
+            emit('connection:status', {
+                'authenticated': True,
+                'player': {
+                    'id': guest['player_id'],
+                    'nickname': guest['nickname'],
+                    'chips': guest['chips'],
+                },
+            })
+        else:
+            emit('connection:status', {'authenticated': False})
     except Exception as e:
         print(f"连接处理错误: {e}")
 
@@ -1080,6 +1087,20 @@ def handle_disconnect():
     """处理玩家断线"""
     try:
         session_id = request.sid
+
+        v1_session = v1_socket_sessions.pop(session_id, None)
+        if v1_session and v1_session.get('table_id'):
+            table = tables.get(v1_session['table_id'])
+            player = table.get_player(v1_session['player_id']) if table else None
+            if player and player.status != PlayerStatus.BROKE:
+                player.status = PlayerStatus.DISCONNECTED
+                _emit_v1_snapshots(v1_session['table_id'])
+            if not app.config.get('TESTING'):
+                socketio.start_background_task(
+                    _schedule_v1_disconnect_cleanup,
+                    v1_session['player_id'],
+                    v1_session['table_id'],
+                )
         
         if session_id in player_sessions:
             player_info = player_sessions[session_id]
@@ -1160,6 +1181,282 @@ def handle_disconnect():
             print(f"玩家 {nickname} 断线，会话已清理，等待重连...")
     except Exception as e:
         print(f"处理断线错误: {e}")
+
+
+def _v1_error(code: str, message: str):
+    emit('error', {'code': code, 'message': message})
+
+
+def _schedule_v1_disconnect_cleanup(player_id: str, table_id: str):
+    time.sleep(30)
+    if any(
+        session.get('player_id') == player_id and session.get('table_id') == table_id
+        for session in v1_socket_sessions.values()
+    ):
+        return
+    _finalize_v1_disconnect(player_id, table_id)
+
+
+def _finalize_v1_disconnect(player_id: str, table_id: str):
+    record = db.get_table(table_id)
+    if not record:
+        return
+    table = tables.get(table_id)
+    if table:
+        table.remove_player(player_id)
+    db.leave_table(table_id, player_id)
+    refreshed = db.get_table(table_id)
+    if not refreshed:
+        tables.pop(table_id, None)
+        return
+    host_id = record.get('host_id') or record['created_by']
+    if host_id == player_id:
+        next_human = next(
+            (row for row in db.get_table_players(table_id) if not row.get('is_bot')),
+            None,
+        )
+        if next_human:
+            db.transfer_table_host(table_id, next_human['player_id'])
+        else:
+            db.close_specific_table(table_id)
+            tables.pop(table_id, None)
+            return
+    _emit_v1_snapshots(table_id)
+
+
+def _v1_session() -> Optional[Dict]:
+    session = v1_socket_sessions.get(request.sid)
+    if session:
+        return session
+    guest = _authenticated_guest()
+    if not guest:
+        return None
+    session = {
+        'player_id': guest['player_id'],
+        'nickname': guest['nickname'],
+        'table_id': None,
+        'join_code': None,
+    }
+    v1_socket_sessions[request.sid] = session
+    return session
+
+
+def _v1_room_context(require_host: bool = False):
+    session = _v1_session()
+    if not session:
+        _v1_error('auth_required', '请先以游客身份进入')
+        return None
+    table_id = session.get('table_id')
+    if not table_id:
+        _v1_error('room_membership_required', '请先加入房间')
+        return None
+    record = db.get_table(table_id)
+    if not record:
+        _v1_error('room_not_found', '房间不存在')
+        return None
+    if not any(row['player_id'] == session['player_id'] for row in db.get_table_players(table_id)):
+        _v1_error('room_membership_required', '您不在这个房间中')
+        return None
+    if require_host and (record.get('host_id') or record['created_by']) != session['player_id']:
+        _v1_error('host_required', '只有房主可以执行此操作')
+        return None
+    return session, record, _table_from_record(record)
+
+
+def _v1_snapshot(record: Dict, table: Table, viewer_id: str) -> Dict:
+    return {
+        'viewer_id': viewer_id,
+        'room': _room_details(record, viewer_id),
+        'table': table.get_table_state(viewer_id),
+    }
+
+
+def _emit_v1_snapshots(table_id: str, event_name: str = 'room:snapshot'):
+    record = db.get_table(table_id)
+    table = tables.get(table_id)
+    if not record or not table:
+        return
+    for sid, session in list(v1_socket_sessions.items()):
+        if session.get('table_id') != table_id:
+            continue
+        socketio.emit(event_name, _v1_snapshot(record, table, session['player_id']), room=sid)
+
+
+@socketio.on('room:join')
+def handle_v1_room_join(data):
+    session = _v1_session()
+    if not session:
+        _v1_error('auth_required', '请先以游客身份进入')
+        return
+    join_code = str((data or {}).get('join_code', '')).strip().upper()
+    record = db.get_table_by_join_code(join_code)
+    if not record:
+        _v1_error('room_not_found', '房间不存在')
+        return
+    if not any(row['player_id'] == session['player_id'] for row in db.get_table_players(record['id'])):
+        _v1_error('room_membership_required', '请先通过房间入口加入')
+        return
+    table = _table_from_record(record)
+    player = table.get_player(session['player_id'])
+    if player and player.status == PlayerStatus.DISCONNECTED:
+        player.status = PlayerStatus.WAITING if table.game_stage == GameStage.WAITING else PlayerStatus.PLAYING
+    session.update({'table_id': record['id'], 'join_code': record['join_code']})
+    join_room(record['id'])
+    emit('connection:status', {'authenticated': True, 'reconnected': bool(player)})
+    _emit_v1_snapshots(record['id'])
+
+
+@socketio.on('room:leave')
+def handle_v1_room_leave(_data=None):
+    context = _v1_room_context()
+    if not context:
+        return
+    session, record, table = context
+    table.remove_player(session['player_id'])
+    db.leave_table(record['id'], session['player_id'])
+    leave_room(record['id'])
+    session.update({'table_id': None, 'join_code': None})
+    emit('room:left', {'join_code': record['join_code']})
+    _emit_v1_snapshots(record['id'])
+
+
+@socketio.on('room:dissolve')
+def handle_v1_room_dissolve(_data=None):
+    context = _v1_room_context(require_host=True)
+    if not context:
+        return
+    _session, record, _table = context
+    socketio.emit('room:dissolved', {'join_code': record['join_code']}, room=record['id'])
+    db.close_specific_table(record['id'])
+    tables.pop(record['id'], None)
+    for socket_session in v1_socket_sessions.values():
+        if socket_session.get('table_id') == record['id']:
+            socket_session.update({'table_id': None, 'join_code': None})
+
+
+@socketio.on('bot:add')
+def handle_v1_bot_add(data):
+    context = _v1_room_context(require_host=True)
+    if not context:
+        return
+    _session, record, table = context
+    if len(table.players) >= table.max_players:
+        _v1_error('room_full', '房间已满')
+        return
+    level_name = str((data or {}).get('level', 'beginner')).upper()
+    try:
+        level = BotLevel[level_name]
+    except KeyError:
+        _v1_error('invalid_bot_level', '机器人等级无效')
+        return
+    bot_id = str(uuid.uuid4())
+    bot_name = {
+        BotLevel.BEGINNER: '松果',
+        BotLevel.INTERMEDIATE: '黑桃',
+        BotLevel.ADVANCED: '河牌大师',
+        BotLevel.GOD: '德州之神',
+    }[level]
+    suffix = 1 + sum(1 for player in table.players if player.is_bot)
+    bot = Bot(bot_id, f'{bot_name}{suffix}', table.initial_chips, level)
+    if not table.add_player(bot):
+        _v1_error('room_full', '房间已满')
+        return
+    with db.get_connection() as conn:
+        now = time.time()
+        conn.execute('''
+            INSERT INTO users (id, nickname, chips, created_at, last_active)
+            VALUES (?, ?, ?, ?, ?)
+        ''', (bot_id, bot.nickname, table.initial_chips, now, now))
+        conn.commit()
+    db.join_table(record['id'], bot_id)
+    with db.get_connection() as conn:
+        conn.execute('''
+            UPDATE table_players SET is_bot = 1, bot_level = ?
+            WHERE table_id = ? AND player_id = ?
+        ''', (level.value, record['id'], bot_id))
+        conn.commit()
+    _emit_v1_snapshots(record['id'])
+
+
+@socketio.on('hand:start')
+def handle_v1_hand_start(_data=None):
+    context = _v1_room_context(require_host=True)
+    if not context:
+        return
+    _session, record, table = context
+    if table.game_stage != GameStage.WAITING:
+        _v1_error('hand_in_progress', '牌局已经开始')
+        return
+    if not table.start_new_hand():
+        _v1_error('not_enough_players', '至少需要两名有筹码的玩家')
+        return
+    _emit_v1_snapshots(record['id'], 'hand:started')
+    _emit_v1_snapshots(record['id'], 'turn:changed')
+    if table.get_current_player() and table.get_current_player().is_bot:
+        socketio.start_background_task(process_bot_actions, record['id'])
+
+
+@socketio.on('player:act')
+def handle_v1_player_action(data):
+    context = _v1_room_context()
+    if not context:
+        return
+    session, record, table = context
+    action_map = {
+        'fold': PlayerAction.FOLD,
+        'check': PlayerAction.CHECK,
+        'call': PlayerAction.CALL,
+        'bet': PlayerAction.BET,
+        'raise': PlayerAction.RAISE,
+        'all_in': PlayerAction.ALL_IN,
+    }
+    action_name = str((data or {}).get('action', '')).lower()
+    action = action_map.get(action_name)
+    try:
+        amount = int((data or {}).get('amount', 0))
+    except (TypeError, ValueError):
+        amount = -1
+    if not action or amount < 0:
+        _v1_error('invalid_action', '动作或金额无效')
+        return
+    result = table.process_player_action(session['player_id'], action, amount)
+    if not result.get('success'):
+        _v1_error('action_rejected', result.get('message', '动作被拒绝'))
+        return
+    socketio.emit('action:resolved', {
+        'player_id': session['player_id'],
+        'action': action_name,
+        'amount': result.get('amount', 0),
+        'description': result.get('description', ''),
+    }, room=record['id'])
+    if result.get('hand_complete'):
+        handle_hand_end(record['id'], result.get('winner'), result.get('showdown_info', {}))
+        _emit_v1_snapshots(record['id'], 'hand:completed')
+        return
+    bot_result = process_bot_actions(record['id'])
+    if bot_result and bot_result.get('hand_complete'):
+        _emit_v1_snapshots(record['id'], 'hand:completed')
+    else:
+        _emit_v1_snapshots(record['id'], 'turn:changed')
+
+
+@socketio.on('round:vote')
+def handle_v1_round_vote(_data=None):
+    context = _v1_room_context()
+    if not context:
+        return
+    session, record, table = context
+    votes = next_round_votes.setdefault(record['id'], set())
+    votes.add(session['player_id'])
+    human_ids = {player.id for player in table.players if not player.is_bot and player.chips > 0}
+    socketio.emit('round:vote', {
+        'votes': len(votes & human_ids),
+        'required': len(human_ids),
+    }, room=record['id'])
+    if human_ids and human_ids.issubset(votes):
+        next_round_votes[record['id']] = set()
+        start_next_round(record['id'])
+        _emit_v1_snapshots(record['id'], 'hand:started')
 
 
 @socketio.on('register_player')
@@ -1586,7 +1883,6 @@ def handle_join_table(data):
                 emit('your_cards', {
                     'hole_cards': [card.to_dict() for card in table_player.hole_cards]
                 })
-                print(f"玩家 {player.nickname} 重连，发送手牌: {[f'{card.rank.symbol}{card.suit.value}' for card in table_player.hole_cards]}")
             
             print(f"玩家 {player.nickname} 重连到房间 {table.title}")
             return
@@ -1830,24 +2126,12 @@ def handle_start_hand():
                             break
                     
                     if player_session:
-                        print(f"📤 发送手牌给玩家 {player.nickname}: {[f'{card.rank.symbol}{card.suit.value}' for card in player.hole_cards]}")
                         socketio.emit('your_cards', {
                             'hole_cards': [card.to_dict() for card in player.hole_cards]
                         }, room=player_session)
             
             print(f"房间 {table.title} 开始新手牌")
             
-            # 后台显示所有玩家的手牌
-            print("=" * 50)
-            print(f"🃏 新一轮玩家手牌信息 (手牌#{table.hand_number})：")
-            for i, player in enumerate(table.players):
-                if player.status == PlayerStatus.PLAYING and len(player.hole_cards) == 2:
-                    card1 = player.hole_cards[0]
-                    card2 = player.hole_cards[1]
-                    card1_str = f"{card1.rank.symbol}{card1.suit.value}"
-                    card2_str = f"{card2.rank.symbol}{card2.suit.value}"
-                    player_type = "🤖" if player.is_bot else "👤"
-                    print(f"  {player_type} {player.nickname}: {card1_str} {card2_str} (筹码: ${player.chips}, 状态: {player.status.value})")
             print(f"🎯 游戏阶段: {table.game_stage.value}")
             print(f"💰 当前底池: ${table.pot}")
             print(f"💵 当前投注: ${table.current_bet}")
@@ -2352,7 +2636,6 @@ def start_next_round(table_id):
                         break
                 
                 if player_session:
-                    print(f"📤 发送手牌给玩家 {player.nickname}: {[f'{card.rank.symbol}{card.suit.value}' for card in player.hole_cards]}")
                     socketio.emit('your_cards', {
                         'hole_cards': [card.to_dict() for card in player.hole_cards]
                     }, room=player_session)
