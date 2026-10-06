@@ -6,9 +6,9 @@ Visual reference: `/Users/guangkaichen/.codex/generated_images/01a105cb-5b26-7e0
 
 ## Automated verification
 
-- `npm test`: 18 files, 35 tests passed.
+- `npm test`: 21 files, 43 tests passed.
 - `npm run build`: TypeScript and Vite production build passed.
-- `.venv/bin/python -m pytest -q`: 67 tests passed.
+- `.venv/bin/python -m unittest discover -s tests`: 58 tests passed.
 - Browser console: no warnings or errors during the complete flow.
 
 ## Browser acceptance
@@ -32,12 +32,17 @@ Completed in the Codex in-app browser against `http://127.0.0.1:8899`:
 15. Verified current blinds and the number of hands until the next increase are visible; the second hand correctly changed the countdown from five to four.
 16. Verified the completed-hand result remains bounded above the board on 390×844: the showdown panel measured `y=70..238.5`, and the post-review fold-win panel measured `y=70..183` while community cards began at `y=363.75`. Neither overlapped the board, hero cards, or next-hand control.
 17. Verified the collapsed result retains its hand/reason summary, measures `y=70..134`, and its expand/collapse control has a 44 px-high touch target.
+18. Verified the home screen now exposes three distinct paths: bot challenge, friend-room creation, and room-code entry.
+19. Opened the friend-room setup at `390×844`, confirmed the 6-player / 1,000 defaults, selected 4 players / 5,000, and created room `GNALJK`.
+20. Verified the created state shows the six-character code, copy confirmation, system-share action, and remains in the dialog until “进入牌桌” is pressed.
+21. Entered the new room and confirmed the authoritative 5,000 buy-in appeared in both the seat and the dedicated hero chip bar; after posting the small blind, both updated to 4,990.
 
 ## Responsive evidence
 
-- `390×844`: `scrollWidth = 390`, `scrollHeight = 844`; no document scrolling. The hero cards end at `y=694` and the action rail begins at `y=740`, leaving a measured 46 px gap during the human turn.
+- `390×844`: `scrollWidth = 390`, `scrollHeight = 844`; no document scrolling. Hero stack `y=595..694`, hero cards `y=625..694`, action rail `y=740..844`; 46 px non-overlap gap.
 - `768×1024`: `scrollWidth = 768`, `scrollHeight = 1024`; table bounds remain within the viewport.
-- `1440×900`: `scrollWidth = 1440`, `scrollHeight = 900`; table bounds `340..1100`, action rail `0..1440`.
+- `1440×686`: `scrollWidth = 1440`, `scrollHeight = 686`; hero stack `y=464..566`, hero cards `y=497..566`, action rail `y=578..686`; 12 px non-overlap gap.
+- `1440×900`: `scrollWidth = 1440`, `scrollHeight = 900`; hero stack `y=678..780`, hero cards `y=711..780`, action rail `y=792..900`; 12 px non-overlap gap.
 
 ## Comparison and fixes
 
@@ -65,6 +70,8 @@ The implementation retains the selected reference’s warm private-lounge atmosp
 - P2: the full hand-result card covered the community cards during review. Moved it below the header, added an accessible collapse/restore control, and measured zero overlap at 390×844.
 - P2: the first collapsed summary omitted the winning category and used a very small toggle. Kept the hand category/fold reason visible and raised the toggle to a measured 44 px touch height.
 - P2: the original bottom utility navigation competed with primary actions. Replaced it with top-level lineup, invite, and settings controls.
+- P1: the self-seat chip line could disappear behind the cards and action rail. Added a dedicated server-authoritative nickname/chip bar above the hero hand and measured non-negative gaps at all target viewports.
+- P2: the home screen mixed room creation into the bot path. Added a separate friend-room setup with exact 2/4/6 seat and 1,000/5,000/10,000 buy-in presets, followed by an invitation state before entering the table.
 - Recheck: all P1/P2 findings fixed; browser console clean; no overflow at target viewports.
 
 final result: passed
