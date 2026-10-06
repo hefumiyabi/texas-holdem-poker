@@ -18,6 +18,9 @@ const createdRoom: RoomInfo = {
   invite_url: 'https://example.test/room/RIV234',
   max_players: 4,
   initial_chips: 5000,
+  currency: 'CNY',
+  small_blind: 10,
+  big_blind: 20,
 }
 
 describe('FriendRoomSetup', () => {
@@ -25,14 +28,17 @@ describe('FriendRoomSetup', () => {
     vi.mocked(api.createFriendRoom).mockReset()
   })
 
-  it('opens from its own home action with six-player and 1,000 defaults', async () => {
+  it('opens with CNY, six-player, 1,000, and 10/20 defaults', async () => {
     render(<MemoryRouter><HomePage user={{ id: 'u1', nickname: 'River', chips: 1000 }} language="zh" onError={vi.fn()} /></MemoryRouter>)
 
     await userEvent.click(screen.getByRole('button', { name: '创建好友房' }))
 
     expect(screen.getByRole('dialog', { name: '设置好友牌桌' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '六人桌' })).toHaveAttribute('aria-pressed', 'true')
-    expect(screen.getByRole('button', { name: '带入 1,000' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: '人民币 ¥' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: '带入 ¥1,000' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('spinbutton', { name: '小盲' })).toHaveValue(10)
+    expect(screen.getByRole('spinbutton', { name: '大盲' })).toHaveValue(20)
   })
 
   it('traps keyboard focus, closes with Escape, and restores the launcher', async () => {
@@ -56,14 +62,52 @@ describe('FriendRoomSetup', () => {
     render(<FriendRoomSetup language="zh" onClose={vi.fn()} onCreate={onCreate} onEnter={vi.fn()} />)
 
     await userEvent.click(screen.getByRole('button', { name: '四人桌' }))
-    await userEvent.click(screen.getByRole('button', { name: '带入 5,000' }))
+    await userEvent.click(screen.getByRole('button', { name: '带入 ¥5,000' }))
     const createButton = screen.getByRole('button', { name: '创建牌桌' })
     await userEvent.dblClick(createButton)
 
     expect(onCreate).toHaveBeenCalledTimes(1)
-    expect(onCreate).toHaveBeenCalledWith({ seatCount: 4, initialChips: 5000 })
+    expect(onCreate).toHaveBeenCalledWith({ seatCount: 4, currency: 'CNY', initialChips: 5000, smallBlind: 10, bigBlind: 20 })
     expect(createButton).toBeDisabled()
     resolveCreate?.(createdRoom)
+  })
+
+  it('switches to JPY presets and submits custom buy-in and blinds', async () => {
+    const onCreate = vi.fn().mockResolvedValue(createdRoom)
+    render(<FriendRoomSetup language="zh" onClose={vi.fn()} onCreate={onCreate} onEnter={vi.fn()} />)
+
+    await userEvent.click(screen.getByRole('button', { name: '日元 JP¥' }))
+    expect(screen.getByRole('button', { name: '带入 JP¥10,000' })).toHaveAttribute('aria-pressed', 'true')
+    await userEvent.click(screen.getByRole('button', { name: '自定义金额' }))
+    await userEvent.clear(screen.getByRole('spinbutton', { name: '自定义带入' }))
+    await userEvent.type(screen.getByRole('spinbutton', { name: '自定义带入' }), '345678')
+    await userEvent.clear(screen.getByRole('spinbutton', { name: '小盲' }))
+    await userEvent.type(screen.getByRole('spinbutton', { name: '小盲' }), '750')
+    await userEvent.clear(screen.getByRole('spinbutton', { name: '大盲' }))
+    await userEvent.type(screen.getByRole('spinbutton', { name: '大盲' }), '1500')
+    await userEvent.click(screen.getByRole('button', { name: '创建牌桌' }))
+
+    expect(onCreate).toHaveBeenCalledWith({
+      seatCount: 6,
+      currency: 'JPY',
+      initialChips: 345678,
+      smallBlind: 750,
+      bigBlind: 1500,
+    })
+  })
+
+  it('announces invalid stakes and does not create the room', async () => {
+    const onCreate = vi.fn()
+    render(<FriendRoomSetup language="zh" onClose={vi.fn()} onCreate={onCreate} onEnter={vi.fn()} />)
+
+    await userEvent.clear(screen.getByRole('spinbutton', { name: '小盲' }))
+    await userEvent.type(screen.getByRole('spinbutton', { name: '小盲' }), '50')
+    await userEvent.clear(screen.getByRole('spinbutton', { name: '大盲' }))
+    await userEvent.type(screen.getByRole('spinbutton', { name: '大盲' }), '50')
+    await userEvent.click(screen.getByRole('button', { name: '创建牌桌' }))
+
+    expect(screen.getByRole('alert')).toHaveTextContent('大盲必须高于小盲')
+    expect(onCreate).not.toHaveBeenCalled()
   })
 
   it('shows creation errors inline and allows retry', async () => {
