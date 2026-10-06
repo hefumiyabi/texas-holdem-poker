@@ -11,7 +11,7 @@ describe('getSeatPositions', () => {
 })
 
 describe('short landscape table layout', () => {
-  it('reserves a clear lane above the action rail for the hero seat and cards', () => {
+  it('reserves clear mobile and short-landscape lanes for the hero chips and cards', () => {
     const css = Array.from(document.styleSheets)
       .flatMap((sheet) => Array.from(sheet.cssRules))
       .map((rule) => rule.cssText)
@@ -19,7 +19,9 @@ describe('short landscape table layout', () => {
       .replace(/\s+/g, '')
 
     expect(css).toContain('@media(min-width:701px)and(max-height:760px)')
-    expect(css).toContain('.hero-hand{bottom:80px;}')
+    expect(css).toContain('.hero-stack{bottom:80px;}')
     expect(css).toContain('.player-seat.self{transform:translate(-50%,-90%);}')
+    expect(css).toContain('@media(max-width:700px)')
+    expect(css).toContain('.hero-stack{bottom:46px;}')
   })
 })
