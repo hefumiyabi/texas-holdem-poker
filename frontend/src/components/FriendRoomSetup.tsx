@@ -1,5 +1,5 @@
 import { Check, Copy, ShareNetwork, UsersThree, X } from '@phosphor-icons/react'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { translate } from '../i18n'
 import type { FriendRoomConfig, Language, RoomInfo } from '../types'
@@ -19,6 +19,15 @@ export function FriendRoomSetup({ language, onClose, onCreate, onEnter }: {
   const [busy, setBusy] = useState(false)
   const [copied, setCopied] = useState(false)
   const [error, setError] = useState('')
+  const dialogRef = useRef<HTMLElement>(null)
+  const closeRef = useRef<HTMLButtonElement>(null)
+  const previousFocus = useRef<HTMLElement | null>(null)
+
+  useEffect(() => {
+    previousFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    closeRef.current?.focus()
+    return () => previousFocus.current?.focus()
+  }, [])
 
   const seatLabel = (value: 2 | 4 | 6) => translate(language, value === 2 ? 'headsUp' : value === 4 ? 'fourPlayers' : 'sixPlayers')
   const inviteUrl = room?.invite_url || (room ? `${window.location.origin}/room/${room.join_code}` : '')
@@ -43,11 +52,21 @@ export function FriendRoomSetup({ language, onClose, onCreate, onEnter }: {
       }
     }
   }
+  const handleDialogKeyDown = (event: React.KeyboardEvent<HTMLElement>) => {
+    if (event.key === 'Escape') { event.preventDefault(); onClose(); return }
+    if (event.key !== 'Tab') return
+    const focusable = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>('button:not([disabled]), [href], input:not([disabled]), [tabindex]:not([tabindex="-1"])') || [])
+    if (!focusable.length) return
+    const first = focusable[0]
+    const last = focusable[focusable.length - 1]
+    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus() }
+    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
+  }
 
   return <div className="challenge-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-    <section className="challenge-sheet friend-room-sheet" role="dialog" aria-modal="true" aria-label={translate(language, 'setupFriendRoom')}>
+    <section ref={dialogRef} className="challenge-sheet friend-room-sheet" role="dialog" aria-modal="true" aria-label={translate(language, 'setupFriendRoom')} onKeyDown={handleDialogKeyDown}>
       <div className="sheet-grabber" aria-hidden="true" />
-      <header><div><span><UsersThree weight="fill" /> {translate(language, 'friendsOnly')}</span><h2>{translate(language, room ? 'roomReady' : 'chooseTable')}</h2></div><button className="sheet-close" onClick={onClose} aria-label={translate(language, 'close')}><X /></button></header>
+      <header><div><span><UsersThree weight="fill" /> {translate(language, 'friendsOnly')}</span><h2>{translate(language, room ? 'roomReady' : 'chooseTable')}</h2></div><button ref={closeRef} className="sheet-close" onClick={onClose} aria-label={translate(language, 'close')}><X /></button></header>
       {!room ? <>
         <p className="friend-room-intro">{translate(language, 'friendRoomHint')}</p>
         <fieldset><legend>{translate(language, 'tableSize')}</legend><div className="choice-grid seat-grid">{seatCounts.map((value) => <button key={value} aria-label={seatLabel(value)} aria-pressed={seatCount === value} onClick={() => setSeatCount(value)}><UsersThree /><span>{seatLabel(value)}</span></button>)}</div></fieldset>

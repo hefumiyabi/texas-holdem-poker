@@ -126,6 +126,5 @@ export interface RoomSnapshot {
   table: TableInfo
   analysis?: Advice
   last_hand_result?: HandResult
-  turn_deadline?: number
   thinking_until?: number
 }

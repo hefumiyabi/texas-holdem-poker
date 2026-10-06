@@ -136,17 +136,12 @@ class V1ApiTestCase(unittest.TestCase):
         client = self.app_module.app.test_client()
         self.create_guest(client)
 
-        unsupported_seats = client.post(
-            "/api/v1/rooms",
-            json={"title": "好友之夜", "max_players": 3, "initial_chips": 1000},
-        )
-        unsupported_buy_in = client.post(
-            "/api/v1/rooms",
-            json={"title": "好友之夜", "max_players": 4, "initial_chips": 750},
-        )
-
-        self.assertEqual(unsupported_seats.status_code, 400)
-        self.assertEqual(unsupported_buy_in.status_code, 400)
+        for seats, buy_in in ((3, 1000), (9, 1000), (4, 500), (4, 750), (4, 2000)):
+            response = client.post(
+                "/api/v1/rooms",
+                json={"title": "好友之夜", "max_players": seats, "initial_chips": buy_in},
+            )
+            self.assertEqual(response.status_code, 400, (seats, buy_in))
 
     def test_room_preview_is_private_safe_and_join_requires_auth(self):
         host = self.app_module.app.test_client()

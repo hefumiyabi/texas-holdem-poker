@@ -2,7 +2,6 @@ import importlib
 import os
 import tempfile
 import threading
-import time
 import unittest
 from unittest import mock
 
@@ -219,56 +218,18 @@ class V1SocketTestCase(unittest.TestCase):
 
         self.assertEqual(snapshot["last_hand_result"]["win_reason"], "best_hand")
 
-    def test_human_turn_snapshot_has_a_thirty_second_server_deadline(self):
+    def test_human_turn_snapshot_has_no_action_deadline(self):
         _client, hero, room = self.create_challenge()
         record = self.app_module.db.get_table(room["id"])
         table = self.app_module.tables[room["id"]]
         self.assertTrue(table.start_new_hand())
 
-        before = time.time()
         self.app_module._sync_turn_clock(room["id"])
         snapshot = self.app_module._v1_snapshot(record, table, hero["id"])
 
-        self.assertGreaterEqual(snapshot["turn_deadline"], before + 29.5)
-        self.assertLessEqual(snapshot["turn_deadline"], before + 30.5)
+        self.assertNotIn("turn_deadline", snapshot)
         self.assertNotIn("thinking_until", snapshot)
-
-    def test_turn_timeout_checks_when_free_and_folds_when_facing_a_bet(self):
-        _client, hero, room = self.create_challenge()
-        table = self.app_module.tables[room["id"]]
-        self.assertTrue(table.start_new_hand())
-        player = table.get_player(hero["id"])
-        table.turn_deadline = time.time() - 1
-        table.turn_clock_key = (table.hand_number, player.id)
-        action = self.app_module._apply_turn_timeout(room["id"], table.hand_number, player.id)
-        self.assertEqual(action, "fold")
-        self.assertEqual(player.status, self.app_module.PlayerStatus.FOLDED)
-
-        table2 = self.app_module.Table("timer-check", "Timer", 10, 20, 2)
-        first = self.app_module.Player("first", "First", 1000)
-        second = self.app_module.Player("second", "Second", 1000)
-        table2.add_player(first); table2.add_player(second)
-        self.app_module.tables[table2.id] = table2
-        self.assertTrue(table2.start_new_hand())
-        current = table2.get_current_player()
-        table2.current_bet = current.current_bet
-        table2.turn_deadline = time.time() - 1
-        table2.turn_clock_key = (table2.hand_number, current.id)
-        action = self.app_module._apply_turn_timeout(table2.id, table2.hand_number, current.id)
-        self.assertEqual(action, "check")
-
-    def test_stale_turn_timeout_cannot_act_on_a_new_player_or_hand(self):
-        _client, hero, room = self.create_challenge()
-        table = self.app_module.tables[room["id"]]
-        self.assertTrue(table.start_new_hand())
-        player = table.get_player(hero["id"])
-        original_status = player.status
-        table.turn_deadline = time.time() - 1
-        table.turn_clock_key = (table.hand_number, player.id)
-
-        self.assertFalse(self.app_module._apply_turn_timeout(room["id"], table.hand_number + 1, player.id))
-        self.assertFalse(self.app_module._apply_turn_timeout(room["id"], table.hand_number, "someone-else"))
-        self.assertEqual(player.status, original_status)
+        self.assertIsNone(table.turn_deadline)
 
     def test_concurrent_round_votes_start_exactly_one_hand(self):
         host_client, _, room = self.create_room()

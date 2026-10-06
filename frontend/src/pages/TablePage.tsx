@@ -81,7 +81,7 @@ export function TablePage({ preferences, onPreferences }: { preferences: Prefere
       <div className="ambient-ring" aria-hidden="true"/>
       <PokerBoard language={language} table={table} />
       <div className="seats-layer">
-        {ordered.map((player, index) => <PlayerSeat key={player.id} language={language} player={player} self={player.id === snapshot.viewer_id} active={player.id === table.current_player_id} deadline={player.id === table.current_player_id ? snapshot.turn_deadline : undefined} thinkingUntil={player.id === table.current_player_id ? snapshot.thinking_until : undefined} style={seatPositions[index]}/>) }
+        {ordered.map((player, index) => <PlayerSeat key={player.id} language={language} player={player} self={player.id === snapshot.viewer_id} active={player.id === table.current_player_id} thinkingUntil={player.id === table.current_player_id ? snapshot.thinking_until : undefined} style={seatPositions[index]}/>) }
         {betweenHands && snapshot.room.is_host && Array.from({ length: Math.max(0, maxPlayers - ordered.length) }, (_, index) => <button key={`empty-${index}`} className="empty-table-seat" style={seatPositions[ordered.length + index]} onClick={() => setLineup(true)} aria-label={translate(language, 'emptySeat')}><Plus /></button>)}
       </div>
       <HeroStack player={viewer} />

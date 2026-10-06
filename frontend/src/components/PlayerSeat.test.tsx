@@ -11,10 +11,9 @@ describe('PlayerSeat states', () => {
     expect(screen.getByText('已弃牌')).toBeInTheDocument()
   })
 
-  it('shows the server-authoritative human countdown', () => {
-    render(<PlayerSeat language="zh" player={human} active self deadline={130} now={100} />)
-    expect(screen.getByRole('timer', { name: 'Hero 剩余 30 秒' })).toBeInTheDocument()
-    expect(screen.getByText('30')).toBeVisible()
+  it('does not show an action countdown for human players', () => {
+    render(<PlayerSeat language="zh" player={human} active self now={100} />)
+    expect(screen.queryByRole('timer')).not.toBeInTheDocument()
   })
 
   it('shows bot thinking countdown', () => {

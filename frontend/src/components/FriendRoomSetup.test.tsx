@@ -35,6 +35,21 @@ describe('FriendRoomSetup', () => {
     expect(screen.getByRole('button', { name: '带入 1,000' })).toHaveAttribute('aria-pressed', 'true')
   })
 
+  it('traps keyboard focus, closes with Escape, and restores the launcher', async () => {
+    render(<MemoryRouter><HomePage user={{ id: 'u1', nickname: 'River', chips: 1000 }} language="zh" onError={vi.fn()} /></MemoryRouter>)
+    const launcher = screen.getByRole('button', { name: '创建好友房' })
+    await userEvent.click(launcher)
+
+    const close = screen.getByRole('button', { name: '关闭' })
+    expect(close).toHaveFocus()
+    await userEvent.tab({ shift: true })
+    expect(screen.getByRole('button', { name: '创建牌桌' })).toHaveFocus()
+    await userEvent.keyboard('{Escape}')
+
+    expect(screen.queryByRole('dialog', { name: '设置好友牌桌' })).not.toBeInTheDocument()
+    expect(launcher).toHaveFocus()
+  })
+
   it('submits selected presets once while creation is pending', async () => {
     let resolveCreate: ((room: RoomInfo) => void) | undefined
     const onCreate = vi.fn(() => new Promise<RoomInfo>((resolve) => { resolveCreate = resolve }))

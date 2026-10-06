@@ -118,7 +118,6 @@ SESSION_TTL_SECONDS = 30 * 24 * 60 * 60
 JOIN_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
 _rate_limit_buckets = defaultdict(deque)
 _rate_limit_lock = threading.Lock()
-TURN_TIMEOUT_SECONDS = 30
 ACTIVE_HAND_STAGES = (GameStage.PRE_FLOP, GameStage.FLOP, GameStage.TURN, GameStage.RIVER)
 
 
@@ -158,54 +157,6 @@ def _sync_turn_clock(table_id: str):
         table.thinking_until = None
         if current.is_bot:
             table.thinking_until = time.time() + current.thinking_time()
-            return
-        table.turn_deadline = time.time() + TURN_TIMEOUT_SECONDS
-        if not app.config.get('TESTING'):
-            socketio.start_background_task(
-                _turn_timeout_task, table_id, table.hand_number, current.id, table.turn_deadline,
-            )
-
-
-def _turn_timeout_task(table_id: str, hand_number: int, player_id: str, deadline: float):
-    socketio.sleep(max(0.0, deadline - time.time()))
-    _apply_turn_timeout(table_id, hand_number, player_id)
-
-
-def _apply_turn_timeout(table_id: str, hand_number: int, player_id: str):
-    """Apply a safe timeout action only if the exact turn is still current."""
-    with _get_table_state_lock(table_id):
-        table = tables.get(table_id)
-        if not table or table.game_stage not in ACTIVE_HAND_STAGES:
-            return False
-        if table.turn_clock_key != (hand_number, player_id):
-            return False
-        if table.turn_deadline is None or table.turn_deadline > time.time():
-            return False
-        current = table.get_current_player()
-        if table.hand_number != hand_number or not current or current.id != player_id or current.is_bot:
-            return False
-        action = PlayerAction.CHECK if table.current_bet <= current.current_bet else PlayerAction.FOLD
-        result = table.process_player_action(player_id, action, 0)
-        if not result.get('success'):
-            return False
-        table.turn_clock_key = None
-        table.turn_deadline = None
-    socketio.emit('action:resolved', {
-        'player_id': player_id,
-        'action': action.value,
-        'amount': 0,
-        'description': '超时自动过牌' if action == PlayerAction.CHECK else '超时自动弃牌',
-    }, room=table_id)
-    if result.get('hand_complete'):
-        handle_hand_end(table_id, result.get('winner'), result.get('showdown_info', {}))
-        _emit_v1_snapshots(table_id, 'hand:completed')
-    else:
-        bot_result = process_bot_actions(table_id)
-        _emit_v1_snapshots(
-            table_id,
-            'hand:completed' if bot_result and bot_result.get('hand_complete') else 'turn:changed',
-        )
-    return action.value
 
 
 def process_bot_actions(table_id: str):
@@ -763,6 +714,9 @@ def create_private_room_v1(guest):
             or game_mode not in ('blinds', 'ante') or not 0.005 <= ante_percentage <= 0.1
             or room_mode not in ('private', 'bot_challenge')):
         return jsonify({'success': False, 'message': '房间参数无效'}), 400
+    if room_mode == 'private' and (
+            max_players not in (2, 4, 6) or initial_chips not in (1000, 5000, 10000)):
+        return jsonify({'success': False, 'message': '好友牌桌参数无效'}), 400
 
     join_code = _new_join_code()
     if room_mode == 'bot_challenge':
@@ -1571,8 +1525,6 @@ def _v1_snapshot(record: Dict, table: Table, viewer_id: str) -> Dict:
     if current and table.turn_clock_key == (table.hand_number, current.id):
         if current.is_bot and table.thinking_until:
             payload['thinking_until'] = table.thinking_until
-        elif not current.is_bot and table.turn_deadline:
-            payload['turn_deadline'] = table.turn_deadline
     if record.get('room_mode') != 'bot_challenge':
         return payload
     if table.game_stage not in (GameStage.PRE_FLOP, GameStage.FLOP, GameStage.TURN, GameStage.RIVER):

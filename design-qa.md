@@ -6,9 +6,9 @@ Visual reference: `/Users/guangkaichen/.codex/generated_images/01a105cb-5b26-7e0
 
 ## Automated verification
 
-- `npm test`: 21 files, 43 tests passed.
+- `npm test`: 21 files, 44 tests passed.
 - `npm run build`: TypeScript and Vite production build passed.
-- `.venv/bin/python -m unittest discover -s tests`: 58 tests passed.
+- `.venv/bin/python -m unittest discover -s tests`: 56 tests passed.
 - Browser console: no warnings or errors during the complete flow.
 - Render `/healthz`: HTTP 200 with `{ "status": "ok" }`; deployed bundle matched local `index-0ZQeAnfB.js` / `index-Dkrt42GM.css`.
 
@@ -27,7 +27,7 @@ Completed in the Codex in-app browser against `http://127.0.0.1:8899`:
 9. Exercised the friend-invite action and reduced-motion preference.
 10. Verified the raise confirmation uses a high-contrast gold button with a distinct bold amount (`确认 64`).
 11. Verified a `跟注 $10` action toast appears immediately, disappears after 1.2 seconds, and leaves the hero cards unobstructed.
-12. Verified the 30-second human countdown, persistent folded badges, and difficulty-based bot thinking state are visible on the correct seats.
+12. Verified human turns no longer show a countdown or receive a timeout action; persistent folded badges and difficulty-based bot thinking state remain visible on the correct seats.
 13. Verified the compact GTO reference expands to show equity, pot odds, and a plain-language recommendation without covering the action buttons.
 14. Reached a real showdown and verified the result card exposed both legal hands, named the winning `A高同花`, and explained that it beat `A高牌` while leaving the hero cards visible.
 15. Verified current blinds and the number of hands until the next increase are visible; the second hand correctly changed the countdown from five to four.
@@ -41,10 +41,10 @@ Completed in the Codex in-app browser against `http://127.0.0.1:8899`:
 
 ## Responsive evidence
 
-- `390×844`: `scrollWidth = 390`, `scrollHeight = 844`; no document scrolling. Hero stack `y=595..694`, hero cards `y=625..694`, action rail `y=740..844`; 46 px non-overlap gap.
+- `390×844`: `scrollWidth = 390`, `scrollHeight = 844`; no document scrolling. Self seat `y=512.7..593.7`, hero stack `y=595..694`, hero cards `y=625..694`, action rail `y=740..844`; 1.3 px seat-to-stack gap and 46 px hand-to-action gap.
 - `768×1024`: `scrollWidth = 768`, `scrollHeight = 1024`; table bounds remain within the viewport.
-- `1440×686`: `scrollWidth = 1440`, `scrollHeight = 686`; hero stack `y=464..566`, hero cards `y=497..566`, action rail `y=578..686`; 12 px non-overlap gap.
-- `1440×900`: `scrollWidth = 1440`, `scrollHeight = 900`; hero stack `y=678..780`, hero cards `y=711..780`, action rail `y=792..900`; 12 px non-overlap gap.
+- `1440×686`: `scrollWidth = 1440`, `scrollHeight = 686`; self seat `y=350.1..449.1`, hero stack `y=464..566`, hero cards `y=497..566`, action rail `y=578..686`; 14.9 px seat-to-stack gap and 12 px hand-to-action gap.
+- `1440×900`: `scrollWidth = 1440`, `scrollHeight = 900`; self seat `y=567.3..666.3`, hero stack `y=678..780`, hero cards `y=711..780`, action rail `y=792..900`; 11.7 px seat-to-stack gap and 12 px hand-to-action gap.
 
 ## Comparison and fixes
 
@@ -74,6 +74,10 @@ The implementation retains the selected reference’s warm private-lounge atmosp
 - P2: the original bottom utility navigation competed with primary actions. Replaced it with top-level lineup, invite, and settings controls.
 - P1: the self-seat chip line could disappear behind the cards and action rail. Added a dedicated server-authoritative nickname/chip bar above the hero hand and measured non-negative gaps at all target viewports.
 - P2: the home screen mixed room creation into the bot path. Added a separate friend-room setup with exact 2/4/6 seat and 1,000/5,000/10,000 buy-in presets, followed by an invitation state before entering the table.
+- P1: the private-room endpoint still accepted legacy 9-seat and 500/2,000-chip combinations. Restricted modern private rooms server-side to the exact presets exposed by the setup flow.
+- P2: the first desktop hero stack overlapped the self avatar. Raised the self seat independently at desktop, short-landscape, mobile, and sizing breakpoints and measured positive separation.
+- P2: the friend-room dialog declared modal semantics without keyboard focus management. Added initial focus, Tab/Shift+Tab trapping, Escape close, and launcher focus restoration.
+- Product change: removed the human 30-second deadline, visible countdown, and timeout auto-check/fold while retaining bot thinking timing.
 - Recheck: all P1/P2 findings fixed; browser console clean; no overflow at target viewports.
 
 final result: passed
