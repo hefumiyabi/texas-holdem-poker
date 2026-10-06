@@ -18,6 +18,8 @@
 - Label recommendations as estimates, not exact solver output.
 - Reveal opponent cards only when `is_showdown=true`.
 - Keep the 390×844 active table scroll-free and preserve the hero-card/action gap.
+- Human turns last 30 seconds and time out to check when legal, otherwise fold; bots retain visible difficulty-based think time.
+- Folded seats stay visibly marked until the next hand.
 
 ## Review Focus
 
@@ -26,6 +28,7 @@
 - Repeated snapshots of one visible state must hit the cache without sharing results across viewers or hands; Task 2 verifies cache keys and clearing.
 - A fold-win result must not include mucked opponent cards; Task 3 asserts the serialized payload omits them.
 - Missing/failed analysis must not prevent a normal room snapshot; Task 2 forces an advisor exception and expects a valid snapshot without `analysis`.
+- Stale timer tasks must not act in a later turn or hand; Task 4 binds deadlines to table, hand number, and current player.
 
 ---
 
@@ -80,23 +83,43 @@
 - [ ] **Step 5: Run** focused tests and verify PASS.
 - [ ] **Step 6: Commit** `feat: expose privacy-safe hand results`.
 
-### Task 4: Coach and Result UI
+### Task 4: Server-Authoritative Turn Timing
+
+**Files:**
+- Modify: `app.py`
+- Modify: `poker_engine/bot.py`
+- Modify: `tests/test_v1_socket.py`
+- Modify: `tests/test_bot_profiles.py`
+
+**Interfaces:**
+- Produces: optional snapshot `turn_deadline` for humans and `thinking_until` for bots; 30-second safe timeout action.
+
+- [ ] **Step 1: Write failing tests** for a 30-second human deadline, timeout-check, timeout-fold, stale-player/old-hand task rejection, and difficulty-based bot think ranges.
+- [ ] **Step 2: Run** focused socket/profile tests and verify RED.
+- [ ] **Step 3: Implement** deadline scheduling keyed by `(table_id, hand_number, player_id)` and revalidate under the table lock before acting.
+- [ ] **Step 4: Implement** bot think-time ranges of 0.8–1.4, 1.2–2.2, and 1.8–3.0 seconds for beginner/intermediate/advanced.
+- [ ] **Step 5: Run** focused tests and verify PASS.
+- [ ] **Step 6: Commit** `feat: add safe turn timers and bot thinking time`.
+
+### Task 5: Coach, Result, and Seat-State UI
 
 **Files:**
 - Create: `frontend/src/components/GtoCoachCard.tsx`
 - Create: `frontend/src/components/GtoCoachCard.test.tsx`
 - Create: `frontend/src/components/HandResultCard.tsx`
 - Create: `frontend/src/components/HandResultCard.test.tsx`
+- Modify: `frontend/src/components/PlayerSeat.tsx`
+- Modify: `frontend/src/components/BotSeat.tsx`
 - Modify: `frontend/src/types.ts`
 - Modify: `frontend/src/i18n.ts`
 - Modify: `frontend/src/pages/TablePage.tsx`
 - Modify: `frontend/src/styles.css`
 
 **Interfaces:**
-- Consumes: snapshot `analysis` and `last_hand_result` from Tasks 2–3.
-- Produces: responsive `GtoCoachCard` and `HandResultCard` with Chinese/English labels.
+- Consumes: snapshot `analysis`, `last_hand_result`, `turn_deadline`, and `thinking_until` from Tasks 2–4.
+- Produces: responsive coach/result cards plus folded and timed seat states with Chinese/English labels.
 
-- [ ] **Step 1: Write failing component tests** for percentage/odds/action content, estimated-reference label, compact expansion, showdown cards/hand names, and fold-win privacy.
+- [ ] **Step 1: Write failing component tests** for percentage/odds/action content, estimated-reference label, compact expansion, showdown cards/hand names, fold-win privacy, persistent folded badges, and human/bot countdown labels.
 - [ ] **Step 2: Run** `npm test -- --run src/components/GtoCoachCard.test.tsx src/components/HandResultCard.test.tsx` and verify RED.
 - [ ] **Step 3: Implement types and both accessible components**; keep the coach hidden when analysis is absent.
 - [ ] **Step 4: Integrate into `TablePage`** without changing action submission or result voting.
@@ -104,7 +127,7 @@
 - [ ] **Step 6: Run** focused tests and `npm run build`, verify PASS.
 - [ ] **Step 7: Commit** `feat: add live coach and showdown result cards`.
 
-### Task 5: End-to-End Verification
+### Task 6: End-to-End Verification
 
 **Files:**
 - Modify: `design-qa.md`
@@ -114,9 +137,9 @@
 - Produces: verified local preview and updated QA evidence.
 
 - [ ] **Step 1: Run full suites:** `.venv/bin/python -m pytest -q`, `npm test -- --run`, and `npm run build`.
-- [ ] **Step 2: Browser-test at 390×844** through pre-flop, flop, action, showdown, refresh, and next hand; measure no page overflow and no overlap with cards/actions.
-- [ ] **Step 3: Verify privacy** by completing one showdown and one fold-win; only the showdown may reveal opponent cards.
-- [ ] **Step 4: Check 768×1024 and 1440×900**, console warnings/errors, reduced motion, and Chinese/English copy.
-- [ ] **Step 5: Update `design-qa.md`** with exact evidence and keep `final result: passed` only if every check succeeds.
-- [ ] **Step 6: Request final independent review**, fix any P1/P2, rerun affected verification, and commit `test: verify live GTO and showdown experience`.
-
+- [ ] **Step 2: Browser-test at 390×844** through pre-flop, flop, action countdown, fold badge, showdown, refresh, and next hand; measure no page overflow and no overlap with cards/actions.
+- [ ] **Step 3: Exercise a shortened test deadline** and verify safe automatic check/fold plus stale-timer rejection.
+- [ ] **Step 4: Verify privacy** by completing one showdown and one fold-win; only the showdown may reveal opponent cards.
+- [ ] **Step 5: Check 768×1024 and 1440×900**, console warnings/errors, reduced motion, and Chinese/English copy.
+- [ ] **Step 6: Update `design-qa.md`** with exact evidence and keep `final result: passed` only if every check succeeds.
+- [ ] **Step 7: Request final independent review**, fix any P1/P2, rerun affected verification, and commit `test: verify live GTO and showdown experience`.
