@@ -2,7 +2,7 @@ services:
   - type: web
     name: riverlight-poker
     runtime: docker
-    plan: 0.5c-512mb
+    plan: free
     numInstances: 1
     healthCheckPath: /healthz
     autoDeployTrigger: commit
@@ -21,7 +21,3 @@ services:
         value: https://riverlight-poker.onrender.com
       - key: POKER_SECRET_KEY
         generateValue: true
-    disk:
-      name: poker-data
-      mountPath: /var/data
-      sizeGB: 1
