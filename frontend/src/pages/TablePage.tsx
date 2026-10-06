@@ -4,6 +4,8 @@ import { useNavigate, useParams } from 'react-router-dom'
 import type { Socket } from 'socket.io-client'
 import { ActionRail } from '../components/ActionRail'
 import { ConnectionBanner } from '../components/ConnectionBanner'
+import { GtoCoachCard } from '../components/GtoCoachCard'
+import { HandResultCard } from '../components/HandResultCard'
 import { LineupDrawer } from '../components/LineupDrawer'
 import { PlayerSeat } from '../components/PlayerSeat'
 import { PlayingCard } from '../components/PlayingCard'
@@ -79,12 +81,14 @@ export function TablePage({ preferences, onPreferences }: { preferences: Prefere
       <div className="ambient-ring" aria-hidden="true"/>
       <PokerBoard language={language} table={table} />
       <div className="seats-layer">
-        {ordered.map((player, index) => <PlayerSeat key={player.id} language={language} player={player} self={player.id === snapshot.viewer_id} active={player.id === table.current_player_id} style={seatPositions[index]}/>) }
+        {ordered.map((player, index) => <PlayerSeat key={player.id} language={language} player={player} self={player.id === snapshot.viewer_id} active={player.id === table.current_player_id} deadline={player.id === table.current_player_id ? snapshot.turn_deadline : undefined} thinkingUntil={player.id === table.current_player_id ? snapshot.thinking_until : undefined} style={seatPositions[index]}/>) }
         {betweenHands && snapshot.room.is_host && Array.from({ length: Math.max(0, maxPlayers - ordered.length) }, (_, index) => <button key={`empty-${index}`} className="empty-table-seat" style={seatPositions[ordered.length + index]} onClick={() => setLineup(true)} aria-label={translate(language, 'emptySeat')}><Plus /></button>)}
       </div>
       <div className="hero-hand" aria-label="Your hand"><div>{viewer.hole_cards?.length ? viewer.hole_cards.map((card, index) => <PlayingCard key={index} card={card}/>) : <><PlayingCard hidden/><PlayingCard hidden/></>}</div></div>
       {state.lastAction && <div className="action-toast">{state.lastAction}</div>}
       {state.error && <button className="error-toast" onClick={() => dispatch({ type: 'clear-error' })}>{state.error}</button>}
+      {snapshot.analysis && <GtoCoachCard language={language} analysis={snapshot.analysis}/>}
+      {snapshot.last_hand_result && table.game_stage === 'finished' && <HandResultCard language={language} result={snapshot.last_hand_result}/>}
     </section>
     {table.game_stage === 'waiting' ? <div className="host-controls">
       {snapshot.room.is_host && <><button onClick={() => setLineup(true)}><Plus/>{translate(language, 'lineup')}</button><button className="gold-button" disabled={!table.can_start} onClick={() => socket?.emit('hand:start')}><Spade weight="fill"/>{translate(language, 'startHand')}</button></>}

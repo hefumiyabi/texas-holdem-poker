@@ -64,6 +64,8 @@ export interface TableInfo {
   max_players?: number
   game_stage: string
   hand_number?: number
+  blind_level?: number
+  hands_until_blind_increase?: number
   community_cards: Card[]
   pot: number
   current_bet?: number
@@ -74,8 +76,51 @@ export interface TableInfo {
   can_start?: boolean
 }
 
+export interface Advice {
+  equity: number
+  pot_odds: number
+  recommended_action: 'fold' | 'check' | 'call' | 'raise'
+  reason: string
+  sample_size: number
+}
+
+export interface HandResultWinner {
+  player_id?: string
+  nickname: string
+  amount: number
+  chips: number
+}
+
+export interface ShowdownPlayer {
+  player_id?: string
+  nickname: string
+  is_bot: boolean
+  hole_cards: Card[]
+  hand_description: string
+  hand_name: string
+  rank: number
+  result: string
+  winnings: number
+  returned: number
+  final_chips: number
+}
+
+export interface HandResult {
+  is_showdown: boolean
+  win_reason: string
+  pot: number
+  community_cards: Card[]
+  winners: HandResultWinner[]
+  showdown_players: ShowdownPlayer[]
+  pots: { amount: number; winners: string[] }[]
+}
+
 export interface RoomSnapshot {
   viewer_id: string
   room: RoomInfo
   table: TableInfo
+  analysis?: Advice
+  last_hand_result?: HandResult
+  turn_deadline?: number
+  thinking_until?: number
 }

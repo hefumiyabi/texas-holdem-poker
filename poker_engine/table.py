@@ -46,6 +46,9 @@ class Table:
         self.title = title
         self.small_blind = small_blind
         self.big_blind = big_blind
+        self.base_small_blind = small_blind
+        self.base_big_blind = big_blind
+        self.blind_increase_interval = 5
         self.max_players = max_players
         self.initial_chips = initial_chips
         
@@ -144,6 +147,16 @@ class Table:
         active_players = [p for p in ordered if p.status != PlayerStatus.DISCONNECTED and p.chips > 0]
         if len(active_players) < 2:
             return False
+
+        # Tournament-style blind clock: advance only at a hand boundary so every
+        # player in the current hand always sees one stable betting structure.
+        next_hand_number = self.hand_number + 1
+        blind_level_index = (next_hand_number - 1) // self.blind_increase_interval
+        blind_multiplier = 2 ** blind_level_index
+        self.small_blind = self.base_small_blind * blind_multiplier
+        self.big_blind = self.base_big_blind * blind_multiplier
+        if self.game_mode == "blinds":
+            self.min_raise = self.big_blind
 
         self._advice_cache.clear()
         self.last_hand_result = None
@@ -866,6 +879,8 @@ class Table:
             'ante_percentage': self.ante_percentage,
             'game_stage': self.game_stage.value,
             'hand_number': self.hand_number,
+            'blind_level': ((max(1, self.hand_number) - 1) // self.blind_increase_interval) + 1,
+            'hands_until_blind_increase': self.blind_increase_interval - ((max(1, self.hand_number) - 1) % self.blind_increase_interval),
             'community_cards': [card.to_dict() for card in self.community_cards],
             'pot': self.pot,
             'current_bet': self.current_bet,
