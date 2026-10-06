@@ -10,6 +10,7 @@ Visual reference: `/Users/guangkaichen/.codex/generated_images/01a105cb-5b26-7e0
 - `npm run build`: TypeScript and Vite production build passed.
 - `.venv/bin/python -m unittest discover -s tests`: 58 tests passed.
 - Browser console: no warnings or errors during the complete flow.
+- Render `/healthz`: HTTP 200 with `{ "status": "ok" }`; deployed bundle matched local `index-0ZQeAnfB.js` / `index-Dkrt42GM.css`.
 
 ## Browser acceptance
 
@@ -36,6 +37,7 @@ Completed in the Codex in-app browser against `http://127.0.0.1:8899`:
 19. Opened the friend-room setup at `390×844`, confirmed the 6-player / 1,000 defaults, selected 4 players / 5,000, and created room `GNALJK`.
 20. Verified the created state shows the six-character code, copy confirmation, system-share action, and remains in the dialog until “进入牌桌” is pressed.
 21. Entered the new room and confirmed the authoritative 5,000 buy-in appeared in both the seat and the dedicated hero chip bar; after posting the small blind, both updated to 4,990.
+22. Repeated the public Render flow with guest `线上验收`: opened the new friend-room setup, selected heads-up, created invitation code `HFVDF2`, and observed no browser warnings or errors.
 
 ## Responsive evidence
 
