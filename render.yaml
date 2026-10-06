@@ -18,6 +18,9 @@ services:
       - key: POKER_DATA_DIR
         value: /var/data
       - key: POKER_ALLOWED_ORIGINS
-        value: https://riverlight-poker.onrender.com
+        fromService:
+          type: web
+          name: riverlight-poker
+          envVarKey: RENDER_EXTERNAL_URL
       - key: POKER_SECRET_KEY
         generateValue: true
