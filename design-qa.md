@@ -6,9 +6,9 @@ Visual reference: `/Users/guangkaichen/.codex/generated_images/01a105cb-5b26-7e0
 
 ## Automated verification
 
-- `npm test`: 21 files, 44 tests passed.
+- `npm test`: 22 files, 48 tests passed.
 - `npm run build`: TypeScript and Vite production build passed.
-- `.venv/bin/python -m unittest discover -s tests`: 56 tests passed.
+- `.venv/bin/python -m unittest discover -s tests`: 59 tests passed.
 - Browser console: no warnings or errors during the complete flow.
 - Render `/healthz`: HTTP 200 with `{ "status": "ok" }`; deployed bundle matched local `index-CEvF-XUU.js` / `index-BVe7bYAY.css`.
 
@@ -38,10 +38,15 @@ Completed in the Codex in-app browser against `http://127.0.0.1:8899`:
 20. Verified the created state shows the six-character code, copy confirmation, system-share action, and remains in the dialog until “进入牌桌” is pressed.
 21. Entered the new room and confirmed the authoritative 5,000 buy-in appeared in both the seat and the dedicated hero chip bar; after posting the small blind, both updated to 4,990.
 22. Repeated the public Render flow with guest `线上验收`: opened the new friend-room setup, selected heads-up, created invitation code `HFVDF2`, and observed no browser warnings or errors.
+23. At `390×844`, verified the friend-room form shows CNY defaults (`¥1,000`, `¥10/¥20`), switches to JPY presets (`JP¥10,000 / JP¥200,000 / JP¥500,000`), and exposes custom buy-in and blind inputs.
+24. Created JPY room `N33SY8` with `JP¥345,678` and `JP¥750 / JP¥1,500`; entered and refreshed the table, confirming the currency, buy-in, blinds, pot, seat stack, and hero stack persisted with no console warnings or errors.
+25. Returned home and created CNY room `CQJWTK` with the 4-player / `¥5,000` preset; entered the table and confirmed `¥10 / ¥20`, `¥0` pot, and `¥5,000` stacks.
 
 ## Responsive evidence
 
 - `390×844`: `scrollWidth = 390`, `scrollHeight = 844`; no document scrolling. Self seat `y=512.7..593.7`, hero stack `y=595..694`, hero cards `y=625..694`, action rail `y=740..844`; 1.3 px seat-to-stack gap and 46 px hand-to-action gap.
+- `390×844` currency setup: default form measured `y=191.8..844`, with its create button fully visible at `y=768..822`; the expanded custom form measured `y=114.8..844`, also keeping the create button fully visible at `y=768..822`.
+- `390×844` JPY table after refresh: no document scrolling; hero stack `y=595..620`, hero cards `y=625..694`, and controls `y=740..844`, leaving 46 px between the hand and controls.
 - `768×1024`: `scrollWidth = 768`, `scrollHeight = 1024`; table bounds remain within the viewport.
 - `1440×686`: `scrollWidth = 1440`, `scrollHeight = 686`; self seat `y=350.1..449.1`, hero stack `y=464..566`, hero cards `y=497..566`, action rail `y=578..686`; 14.9 px seat-to-stack gap and 12 px hand-to-action gap.
 - `1440×900`: `scrollWidth = 1440`, `scrollHeight = 900`; self seat `y=567.3..666.3`, hero stack `y=678..780`, hero cards `y=711..780`, action rail `y=792..900`; 11.7 px seat-to-stack gap and 12 px hand-to-action gap.
@@ -73,11 +78,12 @@ The implementation retains the selected reference’s warm private-lounge atmosp
 - P2: the first collapsed summary omitted the winning category and used a very small toggle. Kept the hand category/fold reason visible and raised the toggle to a measured 44 px touch height.
 - P2: the original bottom utility navigation competed with primary actions. Replaced it with top-level lineup, invite, and settings controls.
 - P1: the self-seat chip line could disappear behind the cards and action rail. Added a dedicated server-authoritative nickname/chip bar above the hero hand and measured non-negative gaps at all target viewports.
-- P2: the home screen mixed room creation into the bot path. Added a separate friend-room setup with exact 2/4/6 seat and 1,000/5,000/10,000 buy-in presets, followed by an invitation state before entering the table.
-- P1: the private-room endpoint still accepted legacy 9-seat and 500/2,000-chip combinations. Restricted modern private rooms server-side to the exact presets exposed by the setup flow.
+- P2: the home screen mixed room creation into the bot path. Added a separate friend-room setup with exact 2/4/6 seats, currency-specific presets, custom buy-in/blinds, and an invitation state before entering the table.
+- P1: the private-room endpoint accepted unsupported seats and weakly parsed monetary values. Restricted seats to 2/4/6, currencies to CNY/JPY, enforced integer/range/blind relationships, and persisted currency through an idempotent SQLite migration.
 - P2: the first desktop hero stack overlapped the self avatar. Raised the self seat independently at desktop, short-landscape, mobile, and sizing breakpoints and measured positive separation.
 - P2: the friend-room dialog declared modal semantics without keyboard focus management. Added initial focus, Tab/Shift+Tab trapping, Escape close, and launcher focus restoration.
 - Product change: removed the human 30-second deadline, visible countdown, and timeout auto-check/fold while retaining bot thinking timing.
+- Product change: added CNY (`¥`) and JPY (`JP¥`) virtual-chip modes; all live-table monetary labels now follow the room currency, with CNY fallback for legacy rooms and bot challenges.
 - Recheck: all P1/P2 findings fixed; browser console clean; no overflow at target viewports.
 
 final result: passed
