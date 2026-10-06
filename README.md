@@ -119,14 +119,14 @@ python app.py
 
 ### 🌐 部署
 
-`render.yaml` 和 `Dockerfile` 可直接用于 Render 付费单实例。创建 Blueprint 后，如果修改了服务名，必须同步把 `POKER_ALLOWED_ORIGINS` 改为实际的 `https://<service>.onrender.com`。磁盘挂载在 `/var/data`，健康检查为 `/healthz`。
+`render.yaml` 和 `Dockerfile` 可直接用于 Render Free 单实例邀请测试。创建 Blueprint 后，如果修改了服务名，必须同步把 `POKER_ALLOWED_ORIGINS` 改为实际的 `https://<service>.onrender.com`，健康检查为 `/healthz`。Free 实例没有持久磁盘；其中的 `/var/data` 只是容器本地目录，冷启动或重新部署时房间、游客会话及牌局数据可能被清空。
 
 ```bash
 docker build -t riverlight-poker .
 docker run --rm -p 10000:10000 -e PORT=10000 -e POKER_DATA_DIR=/var/data -v poker-data:/var/data riverlight-poker
 ```
 
-生产环境使用单个 Gunicorn worker 和线程模式，因为当前牌局状态仍在单进程内存中。部署前请备份 `/var/data`。
+生产环境使用单个 Gunicorn worker 和线程模式，因为当前牌局状态仍在单进程内存中。需要长期保存数据时，请升级为 Render 付费实例并把持久磁盘挂载到 `/var/data`，或改用外部数据库；部署前请备份 `/var/data`。
 
 ### 🤝 参与贡献
 
@@ -236,14 +236,14 @@ Open <http://localhost:8888> and enter a nickname. The server prints a "📱 局
 
 ### 🌐 Deployment
 
-Use the included `render.yaml` and `Dockerfile` for a paid, single-instance Render service. If the service name changes, update `POKER_ALLOWED_ORIGINS` to the exact deployed HTTPS origin. The persistent disk is mounted at `/var/data`; the health endpoint is `/healthz`.
+Use the included `render.yaml` and `Dockerfile` for an invite-only Render Free single-instance demo. If the service name changes, update `POKER_ALLOWED_ORIGINS` to the exact deployed HTTPS origin. The health endpoint is `/healthz`. Render Free has no persistent disk: `/var/data` is container-local and rooms, guest sessions, and game data can be reset by a cold start or redeploy.
 
 ```bash
 docker build -t riverlight-poker .
 docker run --rm -p 10000:10000 -e PORT=10000 -e POKER_DATA_DIR=/var/data -v poker-data:/var/data riverlight-poker
 ```
 
-Use one Gunicorn worker: live game state remains process-local in this release. Back up `/var/data` before releases. A reverse proxy must support WebSocket upgrades.
+Use one Gunicorn worker: live game state remains process-local in this release. For durable data, upgrade to a paid Render service with a persistent disk mounted at `/var/data`, or use an external database. Back up `/var/data` before releases. A reverse proxy must support WebSocket upgrades.
 
 Example Nginx configuration:
 

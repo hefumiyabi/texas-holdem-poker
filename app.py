@@ -1422,8 +1422,8 @@ def handle_disconnect(_reason=None):
         print(f"处理断线错误: {e}")
 
 
-def _v1_error(code: str, message: str):
-    emit('error', {'code': code, 'message': message})
+def _v1_error(code: str, message: str, **details):
+    emit('error', {'code': code, 'message': message, **details})
 
 
 def _schedule_v1_disconnect_cleanup(player_id: str, table_id: str):
@@ -1779,10 +1779,8 @@ def handle_v1_player_action(data):
     }
     action_name = str((data or {}).get('action', '')).lower()
     action = action_map.get(action_name)
-    try:
-        amount = int((data or {}).get('amount', 0))
-    except (TypeError, ValueError):
-        amount = -1
+    raw_amount = (data or {}).get('amount', 0)
+    amount = raw_amount if type(raw_amount) is int else -1
     if not action or amount < 0:
         _v1_error('invalid_action', '动作或金额无效')
         return
@@ -1796,13 +1794,24 @@ def handle_v1_player_action(data):
             table.turn_clock_key = None
             table.turn_deadline = None
     if not result.get('success'):
-        _v1_error('action_rejected', result.get('message', '动作被拒绝'))
+        details = {
+            key: result[key]
+            for key in ('minimum', 'action')
+            if key in result
+        }
+        _v1_error(
+            'action_rejected',
+            result.get('message', '动作被拒绝'),
+            currency=record.get('currency', 'CNY'),
+            **details,
+        )
         return
     socketio.emit('action:resolved', {
         'player_id': session['player_id'],
-        'action': action_name,
+        'action': result.get('action', action_name),
         'amount': result.get('amount', 0),
-        'description': result.get('description', ''),
+        'target_amount': result.get('target_amount', 0),
+        'currency': record.get('currency', 'CNY'),
     }, room=record['id'])
     if result.get('hand_complete'):
         handle_hand_end(record['id'], result.get('winner'), result.get('showdown_info', {}))

@@ -6,9 +6,9 @@ Visual reference: `/Users/guangkaichen/.codex/generated_images/01a105cb-5b26-7e0
 
 ## Automated verification
 
-- `npm test`: 22 files, 48 tests passed.
+- `npm test`: 22 files, 50 tests passed.
 - `npm run build`: TypeScript and Vite production build passed.
-- `.venv/bin/python -m unittest discover -s tests`: 59 tests passed.
+- `.venv/bin/python -m unittest discover -s tests`: 61 tests passed.
 - Browser console: no warnings or errors during the complete flow.
 - Render `/healthz`: HTTP 200 with `{ "status": "ok" }`; deployed bundle matched local `index-DE0cZc0E.js` / `index-kY8P_iKg.css`.
 
@@ -85,6 +85,9 @@ The implementation retains the selected reference’s warm private-lounge atmosp
 - P2: the friend-room dialog declared modal semantics without keyboard focus management. Added initial focus, Tab/Shift+Tab trapping, Escape close, and launcher focus restoration.
 - Product change: removed the human 30-second deadline, visible countdown, and timeout auto-check/fold while retaining bot thinking timing.
 - Product change: added CNY (`¥`) and JPY (`JP¥`) virtual-chip modes; all live-table monetary labels now follow the room currency, with CNY fallback for legacy rooms and bot challenges.
+- P1: live action confirmations and minimum-raise errors still exposed engine strings containing `$`. Socket events now carry structured action, target, minimum, and currency fields; React renders localized `¥` or `JP¥` messages.
+- P1: the socket action boundary coerced floats, numeric strings, and booleans into integer bets. It now accepts only actual non-negative integers, with regression coverage proving invalid input cannot mutate chips, pot, or current bet.
+- Deployment note: the requested Render Free demo has ephemeral storage. `/var/data` can reset on cold starts or redeploys; durable rooms and sessions require a paid persistent disk or external database.
 - Recheck: all P1/P2 findings fixed; browser console clean; no overflow at target viewports.
 
 final result: passed

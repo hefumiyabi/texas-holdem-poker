@@ -289,9 +289,7 @@ class Table:
         if not current_player or current_player.id != player_id:
             return {'success': False, 'message': '现在不是您的回合'}
         
-        try:
-            amount = int(amount or 0)
-        except (TypeError, ValueError):
+        if type(amount) is not int or amount < 0:
             return {'success': False, 'message': '金额无效'}
 
         try:
@@ -310,6 +308,7 @@ class Table:
                 'success': True,
                 'action': action.value,
                 'amount': actual_amount,
+                'target_amount': executed['target_amount'],
                 'description': action_description,
                 'hand_complete': flow_result.get('hand_complete', False),
                 'stage_changed': flow_result.get('stage_changed', False),
@@ -362,10 +361,16 @@ class Table:
             for other in self.players:
                 if isinstance(other, Bot) and other is not player:
                     other.update_opponent_pattern(player.id, act, added, {'stage': self.game_stage.value})
-            return {'success': True, 'action': act, 'amount': added, 'description': desc}
+            return {
+                'success': True,
+                'action': act,
+                'amount': added,
+                'target_amount': player.current_bet,
+                'description': desc,
+            }
 
-        def reject(msg):
-            return {'success': False, 'message': msg}
+        def reject(msg, **details):
+            return {'success': False, 'message': msg, **details}
 
         if player.chips <= 0 and action != PlayerAction.FOLD:
             return reject('没有筹码，无法行动')
@@ -425,8 +430,8 @@ class Table:
             return done(PlayerAction.ALL_IN, added, f"全下 ${added}")
         if amount < minimum:
             if strict:
-                verb = '下注' if action == PlayerAction.BET else '加注到'
-                return reject(f'最小{verb} ${minimum}')
+                verb = '下注' if action == PlayerAction.BET else '加注'
+                return reject(f'最小{verb}', minimum=minimum, action=action.value)
             if minimum >= max_to:
                 added = self._commit_chips(player, max_to)
                 return done(PlayerAction.ALL_IN, added, f"全下 ${added}")

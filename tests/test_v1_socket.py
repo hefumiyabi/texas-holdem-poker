@@ -485,6 +485,68 @@ class V1SocketTestCase(unittest.TestCase):
 
         self.assertEqual(errors[-1]["code"], "room_membership_required")
 
+    def test_player_action_rejects_non_integer_socket_amounts_without_mutation(self):
+        host_client, host = self.guest_client("Host")
+        created = host_client.post("/api/v1/rooms", json={
+            "title": "JPY", "max_players": 2, "currency": "JPY",
+            "initial_chips": 1000, "small_blind": 100, "big_blind": 200,
+        })
+        room = created.get_json()["room"]
+        guest_client, _ = self.guest_client("Guest")
+        guest_client.post(f"/api/v1/rooms/{room['join_code']}/join", json={"position": 1})
+        socket_client = self.app_module.socketio.test_client(
+            self.app_module.app, flask_test_client=host_client
+        )
+        socket_client.emit("room:join", {"join_code": room["join_code"]})
+        socket_client.get_received()
+        socket_client.emit("hand:start", {})
+        socket_client.get_received()
+        table = self.app_module.tables[room["id"]]
+        self.assertEqual(table.get_current_player().id, host["id"])
+        original = (table.pot, table.current_bet, table.get_player(host["id"]).chips)
+
+        for invalid in (400.9, "400", True, None, -1):
+            socket_client.emit("player:act", {"action": "raise", "amount": invalid})
+            errors = self.events_named(socket_client, "error")
+            self.assertEqual(errors[-1]["code"], "invalid_action", invalid)
+            self.assertEqual(
+                (table.pot, table.current_bet, table.get_player(host["id"]).chips),
+                original,
+                invalid,
+            )
+
+    def test_jpy_action_events_and_minimum_errors_are_structured_without_dollars(self):
+        host_client, _ = self.guest_client("Host")
+        created = host_client.post("/api/v1/rooms", json={
+            "title": "JPY", "max_players": 2, "currency": "JPY",
+            "initial_chips": 1000, "small_blind": 100, "big_blind": 200,
+        })
+        room = created.get_json()["room"]
+        guest_client, _ = self.guest_client("Guest")
+        guest_client.post(f"/api/v1/rooms/{room['join_code']}/join", json={"position": 1})
+        socket_client = self.app_module.socketio.test_client(
+            self.app_module.app, flask_test_client=host_client
+        )
+        socket_client.emit("room:join", {"join_code": room["join_code"]})
+        socket_client.get_received()
+        socket_client.emit("hand:start", {})
+        socket_client.get_received()
+
+        socket_client.emit("player:act", {"action": "raise", "amount": 300})
+        rejected = self.events_named(socket_client, "error")[-1]
+        self.assertEqual(rejected["minimum"], 400)
+        self.assertEqual(rejected["action"], "raise")
+        self.assertEqual(rejected["currency"], "JPY")
+        self.assertNotIn("$", rejected["message"])
+
+        socket_client.emit("player:act", {"action": "raise", "amount": 400})
+        resolved = self.events_named(socket_client, "action:resolved")[-1]
+        self.assertEqual(resolved["action"], "raise")
+        self.assertEqual(resolved["amount"], 300)
+        self.assertEqual(resolved["target_amount"], 400)
+        self.assertEqual(resolved["currency"], "JPY")
+        self.assertNotIn("description", resolved)
+
     def test_reconnect_restores_seat_and_own_hole_cards(self):
         host_client, host, room = self.create_room()
         guest_client, _ = self.guest_client("Guest")

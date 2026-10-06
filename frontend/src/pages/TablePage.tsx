@@ -12,10 +12,12 @@ import { PlayerSeat } from '../components/PlayerSeat'
 import { PokerBoard } from '../components/PokerBoard'
 import { SettingsDrawer } from '../components/SettingsDrawer'
 import { TableHeader } from '../components/TableHeader'
+import { formatActionDescription, formatActionError } from '../currency'
 import { translate } from '../i18n'
 import type { Preferences } from '../preferences'
 import { createPokerSocket } from '../socket'
 import { initialTableState, tableReducer } from '../state/tableReducer'
+import type { ActionErrorPayload, ResolvedActionPayload } from '../currency'
 import type { BotPersona, RoomSnapshot } from '../types'
 
 export function getSeatPositions(maxPlayers: number) {
@@ -46,16 +48,16 @@ export function TablePage({ preferences, onPreferences }: { preferences: Prefere
     connection.on('disconnect', () => dispatch({ type: 'connection', status: 'reconnecting' }))
     connection.io.on('reconnect_attempt', () => dispatch({ type: 'connection', status: 'reconnecting' }))
     for (const event of ['room:snapshot', 'hand:started', 'turn:changed', 'hand:completed']) connection.on(event, snapshot)
-    connection.on('action:resolved', (payload: { description?: string }) => {
+    connection.on('action:resolved', (payload: ResolvedActionPayload) => {
       if (actionTimer.current !== null) window.clearTimeout(actionTimer.current)
-      dispatch({ type: 'action', description: payload.description || '' })
+      dispatch({ type: 'action', description: formatActionDescription(payload, language) })
       actionTimer.current = window.setTimeout(() => dispatch({ type: 'clear-action' }), 1200)
     })
-    connection.on('error', (payload: { message?: string }) => dispatch({ type: 'error', message: payload.message || 'Error' }))
+    connection.on('error', (payload: ActionErrorPayload) => dispatch({ type: 'error', message: formatActionError(payload, language) }))
     connection.on('room:left', () => navigate('/')); connection.on('room:dissolved', () => navigate('/'))
     connection.connect()
     return () => { if (actionTimer.current !== null) window.clearTimeout(actionTimer.current); connection.removeAllListeners(); connection.disconnect() }
-  }, [code, navigate])
+  }, [code, language, navigate])
   const snapshot = state.snapshot; const table = snapshot?.table; const viewer = snapshot ? table?.players.find((player) => player.id === snapshot.viewer_id) : undefined
   const ordered = useMemo(() => {
     if (!table || !snapshot) return []
