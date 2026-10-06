@@ -10,6 +10,11 @@ export interface ChallengeConfig {
   personas: BotPersona[]
 }
 
+export interface FriendRoomConfig {
+  seatCount: 2 | 4 | 6
+  initialChips: 1000 | 5000 | 10000
+}
+
 export interface User {
   id: string
   nickname: string

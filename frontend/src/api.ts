@@ -1,4 +1,4 @@
-import type { ChallengeConfig, RoomInfo, User } from './types'
+import type { ChallengeConfig, FriendRoomConfig, RoomInfo, User } from './types'
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
@@ -24,6 +24,14 @@ export const api = {
       initial_chips: config.initialChips,
       personas: config.personas,
     } : { title: '好友之夜', max_players: 6 }),
+  }),
+  createFriendRoom: (config: FriendRoomConfig) => request<{ success: true; room: RoomInfo }>('/api/v1/rooms', {
+    method: 'POST',
+    body: JSON.stringify({
+      title: '好友之夜',
+      max_players: config.seatCount,
+      initial_chips: config.initialChips,
+    }),
   }),
   previewRoom: (code: string) => request<{ success: true; room: RoomInfo }>(`/api/v1/rooms/${encodeURIComponent(code)}`),
   joinRoom: (code: string) => request<{ success: true; room: RoomInfo; player: User }>(`/api/v1/rooms/${encodeURIComponent(code)}/join`, { method: 'POST', body: '{}' }),

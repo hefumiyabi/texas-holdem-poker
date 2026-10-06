@@ -112,6 +112,42 @@ class V1ApiTestCase(unittest.TestCase):
         self.assertTrue(payload["room"]["invite_url"].endswith(f"/room/{payload['room']['join_code']}"))
         self.assertEqual(payload["room"]["host"]["id"], player["id"])
 
+    def test_private_room_preserves_supported_seat_counts_and_buy_ins(self):
+        for seats in (2, 4, 6):
+            for buy_in in (1000, 5000, 10000):
+                client = self.app_module.app.test_client()
+                self.create_guest(client, f"Host{seats}{buy_in}")
+
+                response = client.post(
+                    "/api/v1/rooms",
+                    json={
+                        "title": "好友之夜",
+                        "max_players": seats,
+                        "initial_chips": buy_in,
+                    },
+                )
+
+                self.assertEqual(response.status_code, 201, response.get_data(as_text=True))
+                room = response.get_json()["room"]
+                self.assertEqual(room["max_players"], seats)
+                self.assertEqual(room["initial_chips"], buy_in)
+
+    def test_private_room_rejects_unsupported_seat_count_and_buy_in(self):
+        client = self.app_module.app.test_client()
+        self.create_guest(client)
+
+        unsupported_seats = client.post(
+            "/api/v1/rooms",
+            json={"title": "好友之夜", "max_players": 3, "initial_chips": 1000},
+        )
+        unsupported_buy_in = client.post(
+            "/api/v1/rooms",
+            json={"title": "好友之夜", "max_players": 4, "initial_chips": 750},
+        )
+
+        self.assertEqual(unsupported_seats.status_code, 400)
+        self.assertEqual(unsupported_buy_in.status_code, 400)
+
     def test_room_preview_is_private_safe_and_join_requires_auth(self):
         host = self.app_module.app.test_client()
         self.create_guest(host, "Host")
