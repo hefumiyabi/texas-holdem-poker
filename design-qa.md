@@ -10,7 +10,7 @@ Visual reference: `/Users/guangkaichen/.codex/generated_images/01a105cb-5b26-7e0
 - `npm run build`: TypeScript and Vite production build passed.
 - `.venv/bin/python -m unittest discover -s tests`: 56 tests passed.
 - Browser console: no warnings or errors during the complete flow.
-- Render `/healthz`: HTTP 200 with `{ "status": "ok" }`; deployed bundle matched local `index-0ZQeAnfB.js` / `index-Dkrt42GM.css`.
+- Render `/healthz`: HTTP 200 with `{ "status": "ok" }`; deployed bundle matched local `index-CEvF-XUU.js` / `index-BVe7bYAY.css`.
 
 ## Browser acceptance
 
