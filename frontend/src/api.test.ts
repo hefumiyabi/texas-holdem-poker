@@ -7,7 +7,7 @@ describe('friend room api', () => {
     vi.unstubAllGlobals()
   })
 
-  it('creates a private room with the selected seats and buy-in', async () => {
+  it('creates a private room with its currency, buy-in, and blinds', async () => {
     const room = {
       join_code: 'ABC234',
       title: '好友之夜',
@@ -21,7 +21,7 @@ describe('friend room api', () => {
     })
     vi.stubGlobal('fetch', fetchMock)
 
-    await api.createFriendRoom({ seatCount: 4, initialChips: 5000 })
+    await api.createFriendRoom({ seatCount: 4, currency: 'JPY', initialChips: 200000, smallBlind: 500, bigBlind: 1000 })
 
     expect(fetchMock).toHaveBeenCalledWith('/api/v1/rooms', {
       credentials: 'include',
@@ -30,7 +30,10 @@ describe('friend room api', () => {
       body: JSON.stringify({
         title: '好友之夜',
         max_players: 4,
-        initial_chips: 5000,
+        currency: 'JPY',
+        initial_chips: 200000,
+        small_blind: 500,
+        big_blind: 1000,
       }),
     })
   })

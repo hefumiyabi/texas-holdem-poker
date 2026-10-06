@@ -30,7 +30,10 @@ export const api = {
     body: JSON.stringify({
       title: '好友之夜',
       max_players: config.seatCount,
+      currency: config.currency,
       initial_chips: config.initialChips,
+      small_blind: config.smallBlind,
+      big_blind: config.bigBlind,
     }),
   }),
   previewRoom: (code: string) => request<{ success: true; room: RoomInfo }>(`/api/v1/rooms/${encodeURIComponent(code)}`),

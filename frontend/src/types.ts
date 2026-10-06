@@ -2,6 +2,7 @@ export type Language = 'zh' | 'en'
 export type ConnectionState = 'connecting' | 'connected' | 'reconnecting' | 'offline'
 export type BotDifficulty = 'beginner' | 'intermediate' | 'advanced'
 export type BotPersona = 'balanced' | 'aggressive' | 'tight' | 'caller' | 'tricky'
+export type CurrencyCode = 'CNY' | 'JPY'
 
 export interface ChallengeConfig {
   difficulty: BotDifficulty
@@ -12,7 +13,10 @@ export interface ChallengeConfig {
 
 export interface FriendRoomConfig {
   seatCount: 2 | 4 | 6
-  initialChips: 1000 | 5000 | 10000
+  currency: CurrencyCode
+  initialChips: number
+  smallBlind: number
+  bigBlind: number
 }
 
 export interface User {
@@ -59,6 +63,7 @@ export interface RoomInfo {
   host?: { id?: string; nickname: string } | null
   mode?: 'private' | 'bot_challenge'
   difficulty?: BotDifficulty | null
+  currency?: CurrencyCode
 }
 
 export interface TableInfo {

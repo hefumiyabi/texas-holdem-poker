@@ -132,16 +132,51 @@ class V1ApiTestCase(unittest.TestCase):
                 self.assertEqual(room["max_players"], seats)
                 self.assertEqual(room["initial_chips"], buy_in)
 
-    def test_private_room_rejects_unsupported_seat_count_and_buy_in(self):
+    def test_private_room_accepts_jpy_custom_stakes_and_returns_them(self):
         client = self.app_module.app.test_client()
         self.create_guest(client)
 
-        for seats, buy_in in ((3, 1000), (9, 1000), (4, 500), (4, 750), (4, 2000)):
+        response = client.post(
+            "/api/v1/rooms",
+            json={
+                "title": "东京之夜",
+                "max_players": 4,
+                "currency": "JPY",
+                "initial_chips": 345678,
+                "small_blind": 750,
+                "big_blind": 1500,
+            },
+        )
+
+        self.assertEqual(response.status_code, 201, response.get_data(as_text=True))
+        room = response.get_json()["room"]
+        self.assertEqual(room["currency"], "JPY")
+        self.assertEqual(room["initial_chips"], 345678)
+        self.assertEqual(room["small_blind"], 750)
+        self.assertEqual(room["big_blind"], 1500)
+
+    def test_private_room_rejects_invalid_currency_amounts_and_blinds(self):
+        client = self.app_module.app.test_client()
+        self.create_guest(client)
+
+        payloads = [
+            {"max_players": 3, "initial_chips": 1000},
+            {"max_players": 9, "initial_chips": 1000},
+            {"max_players": 4, "currency": "USD", "initial_chips": 1000},
+            {"max_players": 4, "initial_chips": 99},
+            {"max_players": 4, "initial_chips": 10000001},
+            {"max_players": 4, "initial_chips": 1000.5},
+            {"max_players": 4, "initial_chips": True},
+            {"max_players": 4, "initial_chips": 1000, "small_blind": 0, "big_blind": 20},
+            {"max_players": 4, "initial_chips": 1000, "small_blind": 20, "big_blind": 20},
+            {"max_players": 4, "initial_chips": 1000, "small_blind": 20, "big_blind": 1000},
+        ]
+        for payload in payloads:
             response = client.post(
                 "/api/v1/rooms",
-                json={"title": "好友之夜", "max_players": seats, "initial_chips": buy_in},
+                json={"title": "好友之夜", **payload},
             )
-            self.assertEqual(response.status_code, 400, (seats, buy_in))
+            self.assertEqual(response.status_code, 400, payload)
 
     def test_room_preview_is_private_safe_and_join_requires_auth(self):
         host = self.app_module.app.test_client()

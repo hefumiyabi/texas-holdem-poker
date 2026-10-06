@@ -51,6 +51,7 @@ class PokerDatabase:
                     big_blind INTEGER NOT NULL,
                     max_players INTEGER NOT NULL,
                     initial_chips INTEGER NOT NULL,
+                    currency TEXT NOT NULL DEFAULT 'CNY',
                     game_mode TEXT NOT NULL DEFAULT 'blinds',
                     ante_percentage REAL DEFAULT 0.02,
                     game_stage TEXT NOT NULL DEFAULT 'waiting',
@@ -120,6 +121,8 @@ class PokerDatabase:
                 cursor.execute("ALTER TABLE tables ADD COLUMN room_mode TEXT NOT NULL DEFAULT 'private'")
             if 'bot_difficulty' not in table_columns:
                 cursor.execute('ALTER TABLE tables ADD COLUMN bot_difficulty TEXT')
+            if 'currency' not in table_columns:
+                cursor.execute("ALTER TABLE tables ADD COLUMN currency TEXT NOT NULL DEFAULT 'CNY'")
             player_columns = {
                 row['name'] for row in cursor.execute('PRAGMA table_info(table_players)').fetchall()
             }
@@ -204,7 +207,7 @@ class PokerDatabase:
                     game_mode: str = "blinds", ante_percentage: float = 0.02,
                     join_code: Optional[str] = None, host_id: Optional[str] = None,
                     visibility: str = "private", room_mode: str = "private",
-                    bot_difficulty: Optional[str] = None) -> str:
+                    bot_difficulty: Optional[str] = None, currency: str = "CNY") -> str:
         """创建新房间"""
         with self.lock:
             with self.get_connection() as conn:
@@ -217,12 +220,12 @@ class PokerDatabase:
                     INSERT INTO tables (
                         id, title, small_blind, big_blind, max_players, initial_chips,
                         game_mode, ante_percentage, created_by, created_at, last_activity,
-                        join_code, host_id, visibility, room_mode, bot_difficulty
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        join_code, host_id, visibility, room_mode, bot_difficulty, currency
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (table_id, title, small_blind, big_blind, max_players, 
                       initial_chips, game_mode, ante_percentage, created_by, 
                       current_time, current_time, join_code, host_id or created_by, visibility,
-                      room_mode, bot_difficulty))
+                      room_mode, bot_difficulty, currency))
                 
                 conn.commit()
                 print(f"创建新房间: {title} (ID: {table_id}) by {created_by}, 模式: {game_mode}")

@@ -596,6 +596,7 @@ def _room_preview(record: Dict) -> Dict:
         'big_blind': record['big_blind'],
         'max_players': record['max_players'],
         'initial_chips': record['initial_chips'],
+        'currency': record.get('currency', 'CNY'),
         'game_mode': record.get('game_mode', 'blinds'),
         'ante_percentage': record.get('ante_percentage', 0.02),
         'mode': record.get('room_mode', 'private'),
@@ -700,27 +701,38 @@ def create_private_room_v1(guest):
     data = request.get_json(silent=True) or {}
     room_mode = str(data.get('mode', 'private')).lower()
     title = str(data.get('title', '人格牌局' if room_mode == 'bot_challenge' else '好友牌桌')).strip()
+    currency = str(data.get('currency', 'CNY')).upper()
+
+    def strict_integer(key, default):
+        value = data.get(key, default)
+        if type(value) is not int:
+            raise ValueError(key)
+        return value
+
     try:
-        small_blind = int(data.get('small_blind', 10))
-        big_blind = int(data.get('big_blind', 20))
-        max_players = int(data.get('seat_count', data.get('max_players', 6)))
-        initial_chips = int(data.get('initial_chips', 1000))
+        small_blind = strict_integer('small_blind', 10)
+        big_blind = strict_integer('big_blind', 20)
+        max_players_key = 'seat_count' if 'seat_count' in data else 'max_players'
+        max_players = strict_integer(max_players_key, 6)
+        initial_chips = strict_integer('initial_chips', 1000)
         ante_percentage = float(data.get('ante_percentage', 0.02))
     except (TypeError, ValueError):
         return jsonify({'success': False, 'message': '房间参数格式无效'}), 400
     game_mode = str(data.get('game_mode', 'blinds'))
     if (not title or len(title) > 30 or small_blind < 1 or big_blind <= small_blind
-            or max_players not in (2, 4, 6, 9) or initial_chips not in (500, 1000, 2000, 5000, 10000)
+            or max_players not in (2, 4, 6, 9) or currency not in ('CNY', 'JPY')
             or game_mode not in ('blinds', 'ante') or not 0.005 <= ante_percentage <= 0.1
             or room_mode not in ('private', 'bot_challenge')):
         return jsonify({'success': False, 'message': '房间参数无效'}), 400
     if room_mode == 'private' and (
-            max_players not in (2, 4, 6) or initial_chips not in (1000, 5000, 10000)):
+            max_players not in (2, 4, 6) or not 100 <= initial_chips <= 10_000_000
+            or small_blind >= initial_chips or big_blind >= initial_chips):
         return jsonify({'success': False, 'message': '好友牌桌参数无效'}), 400
 
     join_code = _new_join_code()
     if room_mode == 'bot_challenge':
-        if max_players not in (2, 4, 6):
+        if (max_players not in (2, 4, 6)
+                or initial_chips not in (1000, 5000, 10000) or currency != 'CNY'):
             return jsonify({'success': False, 'message': '挑战桌人数无效'}), 400
         difficulty = str(data.get('difficulty', 'intermediate')).lower()
         raw_personas = data.get('personas')
@@ -766,6 +778,7 @@ def create_private_room_v1(guest):
         host_id=guest['player_id'],
         visibility='private',
         room_mode='private',
+        currency=currency,
     )
     db.join_table(table_id, guest['player_id'], 0)
     record = db.get_table(table_id)
