@@ -117,6 +117,8 @@ SESSION_TTL_SECONDS = 30 * 24 * 60 * 60
 JOIN_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
 _rate_limit_buckets = defaultdict(deque)
 _rate_limit_lock = threading.Lock()
+TURN_TIMEOUT_SECONDS = 30
+ACTIVE_HAND_STAGES = (GameStage.PRE_FLOP, GameStage.FLOP, GameStage.TURN, GameStage.RIVER)
 
 
 def _get_table_state_lock(table_id: str) -> threading.RLock:
@@ -133,6 +135,76 @@ def _with_table_state_lock(function):
         with _get_table_state_lock(table_id):
             return function(table_id, *args, **kwargs)
     return locked
+
+
+def _sync_turn_clock(table_id: str):
+    """Create one authoritative clock for the current hand/player pair."""
+    table = tables.get(table_id)
+    if not table:
+        return
+    with _get_table_state_lock(table_id):
+        current = table.get_current_player()
+        if table.game_stage not in ACTIVE_HAND_STAGES or not current:
+            table.turn_clock_key = None
+            table.turn_deadline = None
+            table.thinking_until = None
+            return
+        key = (table.hand_number, current.id)
+        if table.turn_clock_key == key:
+            return
+        table.turn_clock_key = key
+        table.turn_deadline = None
+        table.thinking_until = None
+        if current.is_bot:
+            table.thinking_until = time.time() + current.thinking_time()
+            return
+        table.turn_deadline = time.time() + TURN_TIMEOUT_SECONDS
+        if not app.config.get('TESTING'):
+            socketio.start_background_task(
+                _turn_timeout_task, table_id, table.hand_number, current.id, table.turn_deadline,
+            )
+
+
+def _turn_timeout_task(table_id: str, hand_number: int, player_id: str, deadline: float):
+    socketio.sleep(max(0.0, deadline - time.time()))
+    _apply_turn_timeout(table_id, hand_number, player_id)
+
+
+def _apply_turn_timeout(table_id: str, hand_number: int, player_id: str):
+    """Apply a safe timeout action only if the exact turn is still current."""
+    with _get_table_state_lock(table_id):
+        table = tables.get(table_id)
+        if not table or table.game_stage not in ACTIVE_HAND_STAGES:
+            return False
+        if table.turn_clock_key != (hand_number, player_id):
+            return False
+        if table.turn_deadline is None or table.turn_deadline > time.time():
+            return False
+        current = table.get_current_player()
+        if table.hand_number != hand_number or not current or current.id != player_id or current.is_bot:
+            return False
+        action = PlayerAction.CHECK if table.current_bet <= current.current_bet else PlayerAction.FOLD
+        result = table.process_player_action(player_id, action, 0)
+        if not result.get('success'):
+            return False
+        table.turn_clock_key = None
+        table.turn_deadline = None
+    socketio.emit('action:resolved', {
+        'player_id': player_id,
+        'action': action.value,
+        'amount': 0,
+        'description': '超时自动过牌' if action == PlayerAction.CHECK else '超时自动弃牌',
+    }, room=table_id)
+    if result.get('hand_complete'):
+        handle_hand_end(table_id, result.get('winner'), result.get('showdown_info', {}))
+        _emit_v1_snapshots(table_id, 'hand:completed')
+    else:
+        bot_result = process_bot_actions(table_id)
+        _emit_v1_snapshots(
+            table_id,
+            'hand:completed' if bot_result and bot_result.get('hand_complete') else 'turn:changed',
+        )
+    return action.value
 
 
 def process_bot_actions(table_id: str):
@@ -162,11 +234,17 @@ def _process_bot_actions_locked(table_id: str):
             return
         
         table = tables[table_id]
+        _sync_turn_clock(table_id)
         
         # 设置机器人逐步行动回调：每个机器人行动后立即广播桌面状态，让玩家看到节奏
         def _bot_action_callback(player):
             try:
+                table.turn_clock_key = None
+                table.thinking_until = None
+                _sync_turn_clock(table_id)
                 socketio.emit('table_updated', table.get_table_state(), room=table_id)
+                if any(session.get('table_id') == table_id for session in v1_socket_sessions.values()):
+                    _emit_v1_snapshots(table_id, 'turn:changed')
             except Exception as e:
                 print(f"⚠️ 机器人行动广播失败: {e}")
         table.on_bot_action = _bot_action_callback
@@ -179,15 +257,7 @@ def _process_bot_actions_locked(table_id: str):
         # 检查是否有机器人需要行动，如果有就先通知前端
         current_player = table.get_current_player()
         if current_player and current_player.is_bot:
-            # 获取机器人等级和对应的思考时间 - 每个机器人决策间隔1秒
-            from poker_engine.bot import BotLevel
-            thinking_delays = {
-                BotLevel.BEGINNER: 1.0,      # 初级 1秒
-                BotLevel.INTERMEDIATE: 1.0,  # 中级 1秒
-                BotLevel.ADVANCED: 1.0,      # 高级 1秒
-                BotLevel.GOD: 1.0            # 德州扑克之神 1秒
-            }
-            delay = thinking_delays.get(current_player.bot_level, 0.0)
+            delay = max(0.0, (table.thinking_until or time.time()) - time.time())
             
             # 增强调试信息
             print(f"🤖 机器人行动准备: {current_player.nickname}")
@@ -210,6 +280,8 @@ def _process_bot_actions_locked(table_id: str):
                 'bot_level': current_player.bot_level.value,
                 'thinking_time': delay
             }, room=table_id)
+            if any(session.get('table_id') == table_id for session in v1_socket_sessions.values()):
+                _emit_v1_snapshots(table_id, 'turn:changed')
         
         result = table.process_bot_actions()
         
@@ -1465,6 +1537,12 @@ def _v1_snapshot(record: Dict, table: Table, viewer_id: str) -> Dict:
     }
     if table.last_hand_result:
         payload['last_hand_result'] = table.last_hand_result
+    current = table.get_current_player()
+    if current and table.turn_clock_key == (table.hand_number, current.id):
+        if current.is_bot and table.thinking_until:
+            payload['thinking_until'] = table.thinking_until
+        elif not current.is_bot and table.turn_deadline:
+            payload['turn_deadline'] = table.turn_deadline
     if record.get('room_mode') != 'bot_challenge':
         return payload
     if table.game_stage not in (GameStage.PRE_FLOP, GameStage.FLOP, GameStage.TURN, GameStage.RIVER):
@@ -1502,6 +1580,7 @@ def _emit_v1_snapshots(table_id: str, event_name: str = 'room:snapshot'):
     table = tables.get(table_id)
     if not record or not table:
         return
+    _sync_turn_clock(table_id)
     for sid, session in list(v1_socket_sessions.items()):
         if session.get('table_id') != table_id:
             continue
@@ -1707,7 +1786,15 @@ def handle_v1_player_action(data):
     if not action or amount < 0:
         _v1_error('invalid_action', '动作或金额无效')
         return
-    result = table.process_player_action(session['player_id'], action, amount)
+    with _get_table_state_lock(record['id']):
+        context = _v1_room_context()
+        if not context:
+            return
+        session, record, table = context
+        result = table.process_player_action(session['player_id'], action, amount)
+        if result.get('success'):
+            table.turn_clock_key = None
+            table.turn_deadline = None
     if not result.get('success'):
         _v1_error('action_rejected', result.get('message', '动作被拒绝'))
         return

@@ -78,6 +78,9 @@ class Table:
         self.on_bot_action = None  # 机器人完成一次行动后的回调钩子（由app层设置，用于逐步广播）
         self._advice_cache: Dict = {}
         self.last_hand_result: Optional[Dict] = None
+        self.turn_clock_key = None
+        self.turn_deadline = None
+        self.thinking_until = None
     
     def add_player(self, player: Player) -> bool:
         """添加玩家到牌桌"""
@@ -144,6 +147,9 @@ class Table:
 
         self._advice_cache.clear()
         self.last_hand_result = None
+        self.turn_clock_key = None
+        self.turn_deadline = None
+        self.thinking_until = None
 
         # 庄家按座位顺序轮换到下一位有筹码的玩家（第一手牌为第一位）
         if self.dealer_id is None or self.hand_number == 0:
@@ -557,15 +563,14 @@ class Table:
                 action_desc = self._get_action_description(action_type, amount)
                 
                 # 根据机器人等级添加思考时间延迟
-                from .bot import BotLevel
-                thinking_delays = {
-                    BotLevel.BEGINNER: 1.0,      # 初级 1秒
-                    BotLevel.INTERMEDIATE: 1.0,  # 中级 1秒
-                    BotLevel.ADVANCED: 1.0,      # 高级 1秒
-                    BotLevel.GOD: 1.0            # 神级 1秒
-                }
-                
-                delay = thinking_delays.get(player.bot_level, 0.0)
+                key = (self.hand_number, player.id)
+                if self.turn_clock_key == key and self.thinking_until:
+                    delay = max(0.0, self.thinking_until - time.time())
+                else:
+                    delay = player.thinking_time()
+                    self.turn_clock_key = key
+                    self.thinking_until = time.time() + delay
+                    self.turn_deadline = None
                 if delay > 0:
                     print(f"🤖 {player.nickname} ({player.bot_level.value}) 思考中... ({delay}秒)")
                     time.sleep(delay)

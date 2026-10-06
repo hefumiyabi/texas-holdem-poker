@@ -51,6 +51,17 @@ class Bot(Player):
         self.opponent_patterns = {}  # 对手行为统计（由牌桌在每次行动后更新，高级机器人据此建模）
         self.session_stats = {'hands_played': 0}
 
+    def thinking_time(self) -> float:
+        """Return a human-readable pause appropriate for the public difficulty."""
+        ranges = {
+            BotLevel.BEGINNER: (0.8, 1.4),
+            BotLevel.INTERMEDIATE: (1.2, 2.2),
+            BotLevel.ADVANCED: (1.8, 3.0),
+            BotLevel.GOD: (1.8, 3.0),
+        }
+        minimum, maximum = ranges[self.bot_level]
+        return self.rng.uniform(minimum, maximum)
+
     def _mix(self, base_frequency: float, channel: str = "balanced") -> bool:
         """Choose a mixed-strategy branch through this bot's seeded random source."""
         multiplier = {

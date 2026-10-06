@@ -131,6 +131,19 @@ def test_seeded_postflop_strategy_is_reproducible():
     assert actions[0] == actions[1] == actions[2]
 
 
+def test_bot_thinking_time_matches_public_difficulty_ranges():
+    ranges = {
+        BotLevel.BEGINNER: (0.8, 1.4),
+        BotLevel.INTERMEDIATE: (1.2, 2.2),
+        BotLevel.ADVANCED: (1.8, 3.0),
+    }
+    for level, (minimum, maximum) in ranges.items():
+        bot = make_bot(BotPersona.BALANCED, level=level, seed=9)
+        samples = [bot.thinking_time() for _ in range(30)]
+        assert all(minimum <= sample <= maximum for sample in samples)
+        assert len(set(samples)) > 1
+
+
 @pytest.mark.parametrize(
     ("state", "expected_actions"),
     [
