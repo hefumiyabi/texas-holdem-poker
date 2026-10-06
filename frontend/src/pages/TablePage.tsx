@@ -23,7 +23,7 @@ const seatPositions = [
 
 export function TablePage({ preferences, onPreferences }: { preferences: Preferences; onPreferences: (preferences: Preferences) => void }) {
   const language = preferences.language; const { code = '' } = useParams(); const navigate = useNavigate()
-  const [state, dispatch] = useReducer(tableReducer, initialTableState); const [settings, setSettings] = useState(false); const [lineup, setLineup] = useState(false); const [copied, setCopied] = useState(false); const [socket, setSocket] = useState<Socket | null>(null)
+  const [state, dispatch] = useReducer(tableReducer, initialTableState); const [settings, setSettings] = useState(false); const [lineup, setLineup] = useState(false); const [betSizing, setBetSizing] = useState(false); const [copied, setCopied] = useState(false); const [socket, setSocket] = useState<Socket | null>(null)
   useEffect(() => {
     const connection = createPokerSocket(); setSocket(connection)
     const snapshot = (payload: RoomSnapshot) => dispatch({ type: 'snapshot', snapshot: payload })
@@ -53,7 +53,7 @@ export function TablePage({ preferences, onPreferences }: { preferences: Prefere
   const addBot = (persona: BotPersona) => socket?.emit('bot:add', { level, persona })
   const removeBot = (playerId: string) => socket?.emit('bot:remove', { player_id: playerId })
   const replaceBot = (playerId: string, persona: BotPersona) => socket?.emit('bot:replace', { player_id: playerId, level, persona })
-  return <main className={`table-shell ${preferences.reducedMotion ? 'reduce-motion' : ''}`}>
+  return <main className={`table-shell ${preferences.reducedMotion ? 'reduce-motion' : ''} ${betSizing ? 'sizing-open' : ''}`}>
     <ConnectionBanner status={state.connection} language={language}/>
     <TableHeader language={language} room={snapshot.room} table={table} copied={copied} onBack={leave} onMenu={() => setSettings(true)} onShare={share} onLineup={() => setLineup(true)} />
     <section className="poker-stage">
@@ -70,7 +70,10 @@ export function TablePage({ preferences, onPreferences }: { preferences: Prefere
     {table.game_stage === 'waiting' ? <div className="host-controls">
       {snapshot.room.is_host && <><button onClick={() => setLineup(true)}><Plus/>{translate(language, 'lineup')}</button><button className="gold-button" disabled={!table.can_start} onClick={() => socket?.emit('hand:start')}><Spade weight="fill"/>{translate(language, 'startHand')}</button></>}
       {!snapshot.room.is_host && <p>{translate(language, 'waiting')}</p>}
-    </div> : table.game_stage === 'finished' ? <div className="host-controls"><button className="gold-button" onClick={() => socket?.emit('round:vote')}><Spade/>{translate(language, 'nextHand')}</button></div> : <ActionRail language={language} table={table} player={viewer} enabled={isTurn} onAct={act}/>} 
+    </div> : table.game_stage === 'finished'
+      ? <div className="host-controls"><button className="gold-button" onClick={() => socket?.emit('round:vote')}><Spade/>{translate(language, 'nextHand')}</button></div>
+      : <ActionRail language={language} table={table} player={viewer} enabled={isTurn} onAct={act} onSizingChange={setBetSizing}/>
+    }
     {lineup && <LineupDrawer language={language} players={table.players} maxPlayers={maxPlayers} difficulty={level} host={Boolean(snapshot.room.is_host)} waiting={table.game_stage === 'waiting'} onClose={() => setLineup(false)} onAdd={addBot} onRemove={removeBot} onReplace={replaceBot} onShare={share} />}
     {settings && <SettingsDrawer preferences={preferences} onChange={onPreferences} onClose={() => setSettings(false)}/>} 
   </main>

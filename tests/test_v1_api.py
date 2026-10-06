@@ -48,6 +48,12 @@ class V1ApiTestCase(unittest.TestCase):
         self.assertIsNotNone(first_client.get_cookie("poker_session"))
         self.assertIsNotNone(second_client.get_cookie("poker_session"))
 
+    def test_modern_avatar_asset_is_served_from_the_built_frontend(self):
+        response = self.app_module.app.test_client().get("/avatars/aggressive.webp")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.mimetype, "image/webp")
+
     def test_private_rooms_never_leak_into_legacy_lobby_or_identity_lookup(self):
         client = self.app_module.app.test_client()
         player = self.create_guest(client, "River")

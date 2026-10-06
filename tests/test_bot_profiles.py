@@ -6,6 +6,7 @@ from poker_engine.bot import Bot, BotLevel
 from poker_engine.card import Card, Rank, Suit
 from poker_engine.player import PlayerAction, PlayerStatus
 from poker_engine.bot_profiles import BotPersona, get_bot_profile
+from poker_engine.table import Table
 
 
 def make_bot(persona=BotPersona.BALANCED, seed=7, level=BotLevel.INTERMEDIATE):
@@ -77,6 +78,19 @@ def test_public_levels_exclude_hidden_card_god_mode():
     assert BotLevel.INTERMEDIATE.is_public
     assert BotLevel.ADVANCED.is_public
     assert not BotLevel.GOD.is_public
+
+
+def test_bot_action_logs_never_print_hidden_cards(monkeypatch, capsys):
+    monkeypatch.setattr("poker_engine.table.time.sleep", lambda _seconds: None)
+    table = Table("privacy", "Privacy", 10, 20, 2, 1000)
+    table.add_player(make_bot(BotPersona.BALANCED, seed=2))
+    table.add_player(Bot("bot-2", "Other Bot", 1000, BotLevel.INTERMEDIATE,
+                         persona=BotPersona.TIGHT, rng=random.Random(3)))
+    table.start_new_hand()
+
+    table.process_bot_actions()
+
+    assert "手牌:" not in capsys.readouterr().out
 
 
 @pytest.mark.parametrize(

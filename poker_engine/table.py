@@ -559,12 +559,6 @@ class Table:
                 
                 print(f"🤖 {player.nickname} 决定: {action_desc}")
                 
-                # 显示机器人手牌（用于调试）
-                if len(player.hole_cards) == 2:
-                    card1_str = f"{player.hole_cards[0].rank.symbol}{player.hole_cards[0].suit.value}"
-                    card2_str = f"{player.hole_cards[1].rank.symbol}{player.hole_cards[1].suit.value}"
-                    print(f"🤖 {player.nickname} 手牌: {card1_str} {card2_str}")
-                
                 # 直接处理机器人动作，不通过process_player_action避免递归（非法金额自动修正为合法值）
                 try:
                     executed = self._execute_action(player, action_type, amount, strict=False)
@@ -1286,4 +1280,4 @@ class Table:
         elif action_type == PlayerAction.ALL_IN:
             return f"全下 ${amount}"
         else:
-            return f"未知动作: {action_type.value}" 
+            return f"未知动作: {action_type.value}"

@@ -792,6 +792,11 @@ def modern_assets(filename):
     return send_from_directory(os.path.join(FRONTEND_DIST, 'assets'), filename)
 
 
+@app.route('/avatars/<path:filename>')
+def modern_avatars(filename):
+    return send_from_directory(os.path.join(FRONTEND_DIST, 'avatars'), filename)
+
+
 @app.route('/legacy/')
 def legacy_index():
     """迁移期间保留的旧版入口。"""
