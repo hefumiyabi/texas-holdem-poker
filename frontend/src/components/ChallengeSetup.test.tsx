@@ -7,7 +7,7 @@ import { HomePage } from '../pages/HomePage'
 import { ChallengeSetup } from './ChallengeSetup'
 
 vi.mock('../api', () => ({
-  api: { createRoom: vi.fn() },
+  api: { createRoom: vi.fn(), createFriendRoom: vi.fn() },
 }))
 
 describe('ChallengeSetup', () => {
