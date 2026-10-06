@@ -1,7 +1,10 @@
 import unittest
+from unittest import mock
 
 from poker_engine.card import Card, Rank, Suit
 from poker_engine.player import Player, PlayerStatus
+from poker_engine.bot import Bot, BotLevel
+from poker_engine.player import PlayerAction
 from poker_engine.table import Table
 
 
@@ -56,6 +59,22 @@ class HandResultTestCase(unittest.TestCase):
         self.assertNotIn('hole_cards', table.last_hand_result['winners'][0])
         self.assertTrue(table.start_new_hand())
         self.assertIsNone(table.last_hand_result)
+
+    def test_fold_win_bot_log_does_not_dump_hidden_cards(self):
+        table = Table('private-log', 'Private log', 10, 20, max_players=2)
+        bots = [Bot('b1', 'One', 1000, BotLevel.BEGINNER), Bot('b2', 'Two', 1000, BotLevel.BEGINNER)]
+        for bot in bots:
+            table.add_player(bot)
+        with mock.patch('builtins.print') as output, mock.patch.object(Bot, 'thinking_time', return_value=0):
+            self.assertTrue(table.start_new_hand())
+            current = table.get_current_player()
+            current.decide_action = mock.Mock(return_value=(PlayerAction.FOLD, 0))
+            result = table.process_bot_actions()
+
+        rendered = ' '.join(str(call) for call in output.call_args_list)
+        self.assertTrue(result['hand_complete'])
+        self.assertNotIn('hole_cards', rendered)
+        self.assertNotIn('showdown_players', rendered)
 
 
 if __name__ == '__main__':

@@ -25,6 +25,7 @@ class V1SocketTestCase(unittest.TestCase):
         self.app_module.session_tables.clear()
         self.app_module.v1_socket_sessions.clear()
         self.app_module.next_round_votes.clear()
+        self.app_module.pending_v1_disconnects.clear()
         self.app_module._table_state_locks.clear()
         self.app_module.app.config.update(TESTING=True, SECRET_KEY="test-secret")
         if hasattr(self.app_module, "_rate_limit_buckets"):
@@ -312,6 +313,57 @@ class V1SocketTestCase(unittest.TestCase):
         self.assertEqual(table.hand_number, 1)
         self.assertEqual(table.game_stage, self.app_module.GameStage.FINISHED)
         self.assertEqual(table.players[0].status, original_status)
+
+    def test_forced_blind_all_ins_finish_immediately(self):
+        host_client, _, room = self.create_challenge()
+        socket_client = self.app_module.socketio.test_client(
+            self.app_module.app, flask_test_client=host_client
+        )
+        socket_client.emit("room:join", {"join_code": room["join_code"]})
+        socket_client.get_received()
+        table = self.app_module.tables[room["id"]]
+        table.base_small_blind = table.small_blind = 1000
+        table.base_big_blind = table.big_blind = 2000
+        table.min_raise = 2000
+        for player in table.players:
+            player.chips = 1000
+
+        socket_client.emit("hand:start", {})
+
+        self.assertEqual(table.game_stage, self.app_module.GameStage.FINISHED)
+        self.assertIsNotNone(table.last_hand_result)
+        self.assertTrue(self.events_named(socket_client, "hand:completed"))
+
+    def test_reconstruction_keeps_completed_hand_and_table_stacks(self):
+        _client, hero, room = self.create_challenge()
+        table = self.app_module.tables[room["id"]]
+        table.hand_number = 10
+        table.game_stage = self.app_module.GameStage.FINISHED
+        table.get_player(hero["id"]).chips = 4321
+        self.app_module.db.save_table_progress(table)
+        self.app_module.tables.clear()
+
+        restored = self.app_module._table_from_record(self.app_module.db.get_table(room["id"]))
+
+        self.assertEqual(restored.hand_number, 10)
+        self.assertEqual(restored.get_player(hero["id"]).chips, 4321)
+        self.assertEqual((restored.small_blind, restored.big_blind), (20, 40))
+
+    def test_disconnect_cleanup_folds_current_player_and_finishes_heads_up_hand(self):
+        host_client, host, room = self.create_room()
+        guest_client, _guest = self.guest_client("Guest")
+        self.assertEqual(guest_client.post(f"/api/v1/rooms/{room['join_code']}/join", json={"position": 1}).status_code, 200)
+        host_socket = self.app_module.socketio.test_client(self.app_module.app, flask_test_client=host_client)
+        host_socket.emit("room:join", {"join_code": room["join_code"]})
+        host_socket.get_received()
+        host_socket.emit("hand:start", {})
+        table = self.app_module.tables[room["id"]]
+        self.assertEqual(table.get_current_player().id, host["id"])
+
+        self.app_module._finalize_v1_disconnect(host["id"], room["id"])
+
+        self.assertEqual(table.game_stage, self.app_module.GameStage.FINISHED)
+        self.assertEqual(table.last_hand_result["win_reason"], "others_folded")
 
     def test_bot_first_action_pushes_a_fresh_v1_snapshot(self):
         host_client, host, room = self.create_room()

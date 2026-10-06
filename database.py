@@ -524,6 +524,32 @@ class PokerDatabase:
                 players.append(player_dict)
             
             return players
+
+    def save_table_progress(self, table) -> None:
+        """Persist the completed-hand state needed to reconstruct a private table."""
+        with self.lock:
+            with self.get_connection() as conn:
+                conn.execute('''
+                    UPDATE tables SET game_stage = ?, hand_number = ?, pot = ?,
+                        current_bet = ?, community_cards = ?, last_activity = ?
+                    WHERE id = ?
+                ''', (
+                    table.game_stage.value, table.hand_number, table.pot,
+                    table.current_bet,
+                    json.dumps([card.to_dict() for card in table.community_cards]),
+                    time.time(), table.id,
+                ))
+                for player in table.players:
+                    conn.execute('''
+                        UPDATE table_players SET chips = ?, current_bet = ?, status = ?,
+                            hole_cards = ?, has_acted = ?
+                        WHERE table_id = ? AND player_id = ?
+                    ''', (
+                        player.chips, player.current_bet, player.status.value,
+                        json.dumps([card.to_dict() for card in player.hole_cards]),
+                        int(player.has_acted), table.id, player.id,
+                    ))
+                conn.commit()
     
     def leave_table(self, table_id: str, player_id: str) -> bool:
         """玩家离开房间"""

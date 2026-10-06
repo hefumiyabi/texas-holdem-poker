@@ -631,7 +631,7 @@ class Table:
                 # 检查游戏流程是否需要推进
                 flow_result = self.process_game_flow()
                 if flow_result['hand_complete']:
-                    print(f"🏆 机器人动作导致手牌结束: {flow_result}")
+                    print(f"🏆 机器人动作导致手牌结束: showdown={bool(flow_result.get('showdown_info', {}).get('is_showdown'))}")
                     # 返回手牌结束的结果，包含完整的摊牌信息
                     return flow_result
                 elif flow_result['stage_changed']:

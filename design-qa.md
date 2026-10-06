@@ -6,9 +6,9 @@ Visual reference: `/Users/guangkaichen/.codex/generated_images/01a105cb-5b26-7e0
 
 ## Automated verification
 
-- `npm test`: 18 files, 33 tests passed.
+- `npm test`: 18 files, 34 tests passed.
 - `npm run build`: TypeScript and Vite production build passed.
-- `.venv/bin/python -m pytest -q`: 63 tests passed.
+- `.venv/bin/python -m pytest -q`: 67 tests passed.
 - Browser console: no warnings or errors during the complete flow.
 
 ## Browser acceptance
@@ -56,6 +56,10 @@ The implementation retains the selected reference’s warm private-lounge atmosp
 - P2: resolved-action messages persisted over the hero area. Moved them to the top of the stage, made them pointer-transparent, and auto-clear them after 1.2 seconds or immediately on hand completion.
 - P2: hand completion did not explain why a player won. Added a privacy-safe result card with revealed cards, the winning hand category/description, and the strongest defeated hand.
 - P2: blind stakes never progressed. Added a stable five-hand blind level that doubles only when a new hand begins and exposes the next increase in the table UI.
+- P1: disconnect cleanup and forced-blind all-ins could leave an actorless hand running. Cleanup now preserves committed all-in chips through settlement, folds expired active seats safely, and immediately settles actorless starts.
+- P1: reconstructed tables lost their hand number and table-scoped stacks. Completed-hand progress now persists atomically and restores the correct blind level and chips.
+- P1: one bot completion log printed the raw result object, including mucked cards after a fold. Replaced it with scalar showdown metadata and added a log privacy regression test.
+- P2: the turn ring lacked a visible countdown and split pots named only the first winner. Added visible remaining seconds plus explicit winner/payout chips for every split-pot winner.
 - P2: the original bottom utility navigation competed with primary actions. Replaced it with top-level lineup, invite, and settings controls.
 - Recheck: all P1/P2 findings fixed; browser console clean; no overflow at target viewports.
 

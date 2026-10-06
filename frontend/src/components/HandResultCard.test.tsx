@@ -27,4 +27,18 @@ describe('HandResultCard', () => {
     expect(screen.getByText('其他玩家弃牌')).toBeInTheDocument()
     expect(screen.queryByLabelText('Bot 手牌')).not.toBeInTheDocument()
   })
+
+  it('names every winner and payout for a split pot', () => {
+    render(<HandResultCard language="zh" result={{
+      ...showdown,
+      winners: [
+        { player_id: 'p1', nickname: 'Hero', amount: 160, chips: 1160 },
+        { player_id: 'p2', nickname: 'Bot', amount: 160, chips: 1160 },
+      ],
+      showdown_players: showdown.showdown_players.map((player) => ({ ...player, result: 'winner', winnings: 160, hand_description: 'A高顺子', hand_name: '顺子', rank: 1 })),
+    }} />)
+    expect(screen.getByText('Hero、Bot 平分底池')).toBeInTheDocument()
+    expect(screen.getByText('Hero +160')).toBeInTheDocument()
+    expect(screen.getByText('Bot +160')).toBeInTheDocument()
+  })
 })

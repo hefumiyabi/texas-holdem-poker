@@ -108,6 +108,7 @@ current_hands: Dict[str, int] = {}    # table_id -> hand_id (当前手牌ID)
 
 # 添加下一轮开始相关的数据结构
 next_round_votes = {}  # {table_id: {player_id: True/False}}
+pending_v1_disconnects = set()  # {(table_id, player_id)} retained through active-hand settlement
 
 _bot_processing_locks: Dict[str, threading.Lock] = {}
 _table_state_locks: Dict[str, threading.RLock] = {}
@@ -604,6 +605,15 @@ def _table_from_record(record: Dict) -> Table:
         game_mode=record.get('game_mode', 'blinds'),
         ante_percentage=record.get('ante_percentage', 0.02),
     )
+    table.hand_number = int(record.get('hand_number') or 0)
+    if table.hand_number:
+        multiplier = 2 ** ((table.hand_number - 1) // table.blind_increase_interval)
+        table.small_blind = table.base_small_blind * multiplier
+        table.big_blind = table.base_big_blind * multiplier
+        table.min_raise = table.big_blind
+        table.last_raise_size = table.big_blind
+    if record.get('game_stage') in (GameStage.WAITING.value, GameStage.FINISHED.value):
+        table.game_stage = GameStage(record['game_stage'])
     tables[record['id']] = table
     for row in db.get_table_players(record['id']):
         user = db.get_user(row['player_id'])
@@ -1465,6 +1475,26 @@ def _finalize_v1_disconnect(player_id: str, table_id: str):
         return
     table = tables.get(table_id)
     if table:
+        with _get_table_state_lock(table_id):
+            player = table.get_player(player_id)
+            if player and table.game_stage in ACTIVE_HAND_STAGES and player in table._participants():
+                pending_v1_disconnects.add((table_id, player_id))
+                if player.status == PlayerStatus.PLAYING:
+                    player.fold()
+                flow_result = table.process_game_flow()
+            else:
+                flow_result = None
+        if flow_result and flow_result.get('hand_complete'):
+            handle_hand_end(table_id, flow_result.get('winner'), flow_result.get('showdown_info', {}))
+            _emit_v1_snapshots(table_id, 'hand:completed')
+        elif (table_id, player_id) in pending_v1_disconnects:
+            bot_result = process_bot_actions(table_id)
+            completed = bool(bot_result and bot_result.get('hand_complete')) or table.game_stage == GameStage.FINISHED
+            _emit_v1_snapshots(table_id, 'hand:completed' if completed else 'turn:changed')
+            if completed:
+                return
+        if (table_id, player_id) in pending_v1_disconnects:
+            return
         table.remove_player(player_id)
     db.leave_table(table_id, player_id)
     refreshed = db.get_table(table_id)
@@ -1758,6 +1788,11 @@ def handle_v1_hand_start(_data=None):
             return
         next_round_votes[record['id']] = set()
         _emit_v1_snapshots(record['id'], 'hand:started')
+        flow_result = table.process_game_flow() if table.get_current_player() is None else None
+        if flow_result and flow_result.get('hand_complete'):
+            handle_hand_end(record['id'], flow_result.get('winner'), flow_result.get('showdown_info', {}))
+            _emit_v1_snapshots(record['id'], 'hand:completed')
+            return
         _emit_v1_snapshots(record['id'], 'turn:changed')
         if table.get_current_player() and table.get_current_player().is_bot:
             socketio.start_background_task(process_bot_actions_delayed, record['id'], 0)
@@ -3140,6 +3175,26 @@ def handle_hand_end(table_id, winner, showdown_info):
             log_hand_ended(hand_id, winner_id, winner_nickname, 
                           winning_amount, table.pot, community_cards, showdown_info)
         
+        # Persist table-scoped stacks and blind progression atomically at a hand boundary.
+        db.save_table_progress(table)
+
+        # Players whose 30-second reconnect window expired stay eligible for
+        # their committed chips, then leave only after settlement is persisted.
+        disconnected_ids = [
+            player_id for pending_table_id, player_id in pending_v1_disconnects
+            if pending_table_id == table_id
+        ]
+        for player_id in disconnected_ids:
+            table.remove_player(player_id)
+            db.leave_table(table_id, player_id)
+            pending_v1_disconnects.discard((table_id, player_id))
+        if disconnected_ids:
+            record = db.get_table(table_id)
+            if record and (record.get('host_id') or record['created_by']) in disconnected_ids:
+                next_human = next((row for row in db.get_table_players(table_id) if not row.get('is_bot')), None)
+                if next_human:
+                    db.transfer_table_host(table_id, next_human['player_id'])
+
         # 保存玩家筹码到数据库
         for player in table.players:
             if not player.is_bot:

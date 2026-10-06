@@ -24,7 +24,7 @@ export function PlayerSeat({ player, active, self, style, language = 'zh', deadl
   const timerLabel = language === 'zh' ? `${player.nickname} 剩余 ${seconds} 秒` : `${player.nickname} has ${seconds} seconds left`
   return <div className={`player-seat ${active ? 'active' : ''} ${self ? 'self' : ''} ${disconnected ? 'dimmed' : ''} ${folded ? 'folded' : ''}`} style={style}>
     {player.current_bet > 0 && <span className="seat-bet"><i />{player.current_bet.toLocaleString()}</span>}
-    <div className="avatar-ring"><div className="avatar">{initials(player.nickname)}</div>{active && deadline && <span className="turn-timer" role="timer" aria-label={timerLabel}><i /></span>}{folded && <span className="folded-badge">{language === 'zh' ? '已弃牌' : 'Folded'}</span>}</div>
+    <div className="avatar-ring"><div className="avatar">{initials(player.nickname)}</div>{active && deadline && <span className="turn-timer" role="timer" aria-label={timerLabel}><i /><b className="turn-seconds">{seconds}</b></span>}{folded && <span className="folded-badge">{language === 'zh' ? '已弃牌' : 'Folded'}</span>}</div>
     <div className="seat-identity">
       <strong>{player.nickname}{self ? ' · YOU' : ''}</strong>
       <span>{disconnected ? <><WifiSlash /> OFFLINE</> : player.chips.toLocaleString()}</span>

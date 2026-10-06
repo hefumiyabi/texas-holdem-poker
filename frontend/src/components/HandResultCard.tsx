@@ -7,9 +7,14 @@ export function HandResultCard({ language, result }: { language: Language; resul
   const strongestLoser = result.showdown_players
     .filter((player) => player.result !== 'winner')
     .sort((a, b) => a.rank - b.rank)[0]
-  const title = language === 'zh' ? `${winner?.nickname || '玩家'} 获胜` : `${winner?.nickname || 'Player'} wins`
+  const split = result.winners.length > 1
+  const winnerNames = result.winners.map((entry) => entry.nickname).join(language === 'zh' ? '、' : ', ')
+  const title = split
+    ? (language === 'zh' ? `${winnerNames} 平分底池` : `${winnerNames} split the pot`)
+    : (language === 'zh' ? `${winner?.nickname || '玩家'} 获胜` : `${winner?.nickname || 'Player'} wins`)
   return <section className="hand-result-card" role="status">
-    <header><small>{language === 'zh' ? '本手结果' : 'Hand result'}</small><strong>{title}</strong><span>+{winner?.amount || result.pot}</span></header>
+    <header><small>{language === 'zh' ? '本手结果' : 'Hand result'}</small><strong>{title}</strong>{!split && <span>+{winner?.amount ?? result.pot}</span>}</header>
+    {split && <div className="winner-payouts">{result.winners.map((entry) => <span key={entry.player_id || entry.nickname}>{entry.nickname} +{entry.amount}</span>)}</div>}
     {!result.is_showdown || result.win_reason === 'others_folded'
       ? <p className="result-reason">{language === 'zh' ? '其他玩家弃牌' : 'All other players folded'}</p>
       : <>

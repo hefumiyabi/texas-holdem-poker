@@ -14,6 +14,7 @@ describe('PlayerSeat states', () => {
   it('shows the server-authoritative human countdown', () => {
     render(<PlayerSeat language="zh" player={human} active self deadline={130} now={100} />)
     expect(screen.getByRole('timer', { name: 'Hero 剩余 30 秒' })).toBeInTheDocument()
+    expect(screen.getByText('30')).toBeVisible()
   })
 
   it('shows bot thinking countdown', () => {
