@@ -10,6 +10,7 @@ from .player import Player, PlayerAction, PlayerStatus
 from .card import Card, Suit, Rank
 from .hand_evaluator import HandEvaluator, HandRank
 from .equity import equity_vs_random, equity_vs_known, preflop_equity
+from .bot_profiles import BotPersona, get_bot_profile
 import itertools
 import math
 
@@ -21,11 +22,18 @@ class BotLevel(Enum):
     ADVANCED = "advanced"  # 高级
     GOD = "god"  # 德州扑克之神 (能看到所有手牌)
 
+    @property
+    def is_public(self) -> bool:
+        return self is not BotLevel.GOD
+
 
 class Bot(Player):
     """机器人玩家类"""
     
-    def __init__(self, player_id: str, nickname: str, chips: int = 1000, level: BotLevel = BotLevel.BEGINNER):
+    def __init__(self, player_id: str, nickname: str, chips: int = 1000,
+                 level: BotLevel = BotLevel.BEGINNER,
+                 persona: BotPersona = BotPersona.BALANCED,
+                 rng: Optional[random.Random] = None):
         """
         初始化机器人
         
@@ -37,8 +45,25 @@ class Bot(Player):
         """
         super().__init__(player_id, nickname, chips, is_bot=True)
         self.bot_level = level
+        self.bot_persona = persona if isinstance(persona, BotPersona) else BotPersona(str(persona).lower())
+        self.profile = get_bot_profile(self.bot_persona)
+        self.rng = rng or random.Random()
         self.opponent_patterns = {}  # 对手行为统计（由牌桌在每次行动后更新，高级机器人据此建模）
         self.session_stats = {'hands_played': 0}
+
+    def _mix(self, base_frequency: float, channel: str = "balanced") -> bool:
+        """Choose a mixed-strategy branch through this bot's seeded random source."""
+        multiplier = {
+            'aggression': self.profile.aggression,
+            'bluff': self.profile.bluff_frequency,
+            'slow_play': self.profile.slow_play,
+        }.get(channel, 1.0)
+        probability = max(0.0, min(0.95, base_frequency * multiplier))
+        return self.rng.random() < probability
+
+    def _sized_bet(self, game_state: Dict, amount: float) -> Tuple[PlayerAction, int]:
+        """Apply a personality's sizing preference while retaining legal boundaries."""
+        return self._bet(game_state, max(1, int(amount * self.profile.sizing)))
     
     def decide_action(self, game_state: Dict) -> Tuple[PlayerAction, int]:
         """
@@ -176,19 +201,19 @@ class Bot(Player):
             # 边际牌：考虑底池赔率和随机性
             if pot_odds > 0.3:  # 底池赔率好的时候弃牌
                 return PlayerAction.FOLD, 0
-            elif random.random() < 0.7:  # 70% 跟注
+            elif self._mix(0.7 + self.profile.preflop_looseness):  # 受控混合跟注
                 return PlayerAction.CALL, call_amount
             else:
                 return PlayerAction.FOLD, 0
         elif hand_strength < 0.6:
             # 中等牌：基本跟注
-            if random.random() < 0.85:  # 85% 跟注
+            if self._mix(0.85 + self.profile.preflop_looseness):
                 return PlayerAction.CALL, call_amount
             else:
                 return PlayerAction.FOLD, 0
         else:
             # 强牌：跟注或加注
-            if random.random() < 0.4:  # 40% 最小加注
+            if self._mix(0.4, 'aggression'):
                 return self._raise(game_state, 0)
             else:
                 return PlayerAction.CALL, call_amount
@@ -224,10 +249,10 @@ class Bot(Player):
         if call_amount == 0:
             if strength > 0.65:
                 # 价值下注
-                return self._bet(game_state, self._calculate_bet_size(pot_size, strength, 'value'))
-            elif strength > 0.4 and len(community_cards) >= 3 and random.random() < 0.15:
+                return self._sized_bet(game_state, self._calculate_bet_size(pot_size, strength, 'value'))
+            elif strength > 0.4 and len(community_cards) >= 3 and self._mix(0.15, 'bluff'):
                 # 小概率半诈唬
-                return self._bet(game_state, self._calculate_bet_size(pot_size, strength, 'bluff'))
+                return self._sized_bet(game_state, self._calculate_bet_size(pot_size, strength, 'bluff'))
             return PlayerAction.CHECK, 0
 
         pot_odds = call_amount / (pot_size + call_amount) if (pot_size + call_amount) > 0 else 1
@@ -240,11 +265,11 @@ class Bot(Player):
             if strength > 0.75:
                 # 强牌大幅加注：加注幅度按跟注后的底池计算
                 return self._raise(game_state, self._calculate_bet_size(pot_size + call_amount, strength, 'value'))
-            if strength > 0.62 and random.random() < 0.4:
+            if strength > 0.62 and self._mix(0.4, 'aggression'):
                 # 较强的牌有时最小加注
                 return self._raise(game_state, 0)
             return PlayerAction.CALL, call_amount
-        if equity > pot_odds - 0.03 and random.random() < 0.3:
+        if equity > pot_odds - 0.03 and self._mix(0.3 + self.profile.preflop_looseness):
             # 边际情况偶尔跟注，避免过于好读
             return PlayerAction.CALL, call_amount
         return PlayerAction.FOLD, 0
@@ -294,24 +319,26 @@ class Bot(Player):
         if call_amount == 0:
             if preflop:
                 # 翻牌前（大盲选择权或平跟的底池）：按位置的开池标准加注
-                open_threshold = {'early': 0.64, 'middle': 0.60, 'late': 0.56}.get(position, 0.60)
+                open_threshold = {'early': 0.64, 'middle': 0.60, 'late': 0.56}.get(position, 0.60) - self.profile.preflop_looseness
                 if strength >= open_threshold:
-                    return self._bet(game_state, max(pot, 2 * big_blind))
+                    return self._sized_bet(game_state, max(pot, 2 * big_blind))
                 return PlayerAction.CHECK, 0
             value_threshold = 0.55 if avg_tightness < 0.4 else 0.6  # 对跟注站可以更薄地价值下注
             if equity >= 0.8:
-                return self._bet(game_state, pot * 0.9)
+                if self._mix(0.5, 'slow_play'):
+                    return PlayerAction.CHECK, 0
+                return self._sized_bet(game_state, pot * 0.9)
             if equity >= value_threshold:
-                return self._bet(game_state, pot * (0.5 + (equity - value_threshold)))
+                return self._sized_bet(game_state, pot * (0.5 + (equity - value_threshold)))
             if len(board) < 5 and 0.3 <= equity < value_threshold and num_opponents <= 2:
                 # 听牌/中等牌半诈唬：后位更积极
-                if random.random() < (0.3 if position == 'late' else 0.15):
-                    return self._bet(game_state, pot * 0.5)
+                if self._mix(0.3 if position == 'late' else 0.15, 'bluff'):
+                    return self._sized_bet(game_state, pot * 0.5)
             if len(board) == 5 and equity < 0.2 and num_opponents <= 2:
                 # 河牌诈唬：诈唬占下注范围的比例 b/(p+2b)，再乘以对手弃牌倾向
                 bet = pot * 0.66
-                if random.random() < avg_tightness * bet / (pot + 2 * bet):
-                    return self._bet(game_state, bet)
+                if self._mix(avg_tightness * bet / (pot + 2 * bet), 'bluff'):
+                    return self._sized_bet(game_state, bet)
             return PlayerAction.CHECK, 0
 
         # ---------- 面对下注 ----------
@@ -324,7 +351,7 @@ class Bot(Player):
             if strength >= 0.72:
                 # QQ+、AK 等强牌再加注（约 3 倍）
                 return self._raise(game_state, pot + call_amount)
-            open_threshold = {'early': 0.62, 'middle': 0.58, 'late': 0.55}.get(position, 0.58)
+            open_threshold = {'early': 0.62, 'middle': 0.58, 'late': 0.55}.get(position, 0.58) - self.profile.preflop_looseness
             if call_amount <= big_blind and strength >= open_threshold:
                 # 无人加注的底池：按位置开池加注
                 return self._raise(game_state, pot + call_amount)
@@ -338,7 +365,7 @@ class Bot(Player):
             return PlayerAction.CALL, call_amount
         if (len(board) >= 4 and num_opponents == 1 and position == 'late' and equity < 0.15
                 and self._opponent_profile(opponents[0].id if opponents else None)['aggression'] > 0.6
-                and random.random() < 0.05):
+                and self._mix(0.05, 'bluff')):
             # 对激进对手偶尔用空气牌加注反诈唬
             return self._raise(game_state, (pot + call_amount) * 0.75)
         return PlayerAction.FOLD, 0
@@ -466,7 +493,7 @@ class Bot(Player):
                 return self._bet(game_state, pot_size)              # 大幅领先：满池下注榨取价值
             if equity >= 0.6:
                 return self._bet(game_state, pot_size * 0.6)        # 领先：中等下注
-            if len(community_cards) >= 4 and equity < 0.25 and random.random() < 0.2:
+            if len(community_cards) >= 4 and equity < 0.25 and self._mix(0.2, 'bluff'):
                 # 转牌/河牌落后时偶尔诈唬，让对手无法通过「下注=领先」读牌
                 return self._bet(game_state, pot_size * 0.6)
             return PlayerAction.CHECK, 0
@@ -485,4 +512,6 @@ class Bot(Player):
         """扩展父类方法，增加机器人特有信息"""
         data = super().to_dict(include_hole_cards)
         data['bot_level'] = self.bot_level.value
-        return data 
+        data['bot_persona'] = self.bot_persona.value
+        data['persona_label'] = self.profile.label
+        return data
