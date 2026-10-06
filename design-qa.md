@@ -30,7 +30,8 @@ Completed in the Codex in-app browser against `http://127.0.0.1:8899`:
 13. Verified the compact GTO reference expands to show equity, pot odds, and a plain-language recommendation without covering the action buttons.
 14. Reached a real showdown and verified the result card exposed both legal hands, named the winning `A高同花`, and explained that it beat `A高牌` while leaving the hero cards visible.
 15. Verified current blinds and the number of hands until the next increase are visible; the second hand correctly changed the countdown from five to four.
-16. Verified the completed-hand result sits at `y=70..238.5` while community cards sit at `y=358.75..413.75` on 390×844, with no overlap against the board, hero cards, or next-hand control. Collapsing reduces the result to `y=70..115` and restores the full board-review view.
+16. Verified the completed-hand result remains bounded above the board on 390×844: the showdown panel measured `y=70..238.5`, and the post-review fold-win panel measured `y=70..183` while community cards began at `y=363.75`. Neither overlapped the board, hero cards, or next-hand control.
+17. Verified the collapsed result retains its hand/reason summary, measures `y=70..134`, and its expand/collapse control has a 44 px-high touch target.
 
 ## Responsive evidence
 
@@ -62,6 +63,7 @@ The implementation retains the selected reference’s warm private-lounge atmosp
 - P1: one bot completion log printed the raw result object, including mucked cards after a fold. Replaced it with scalar showdown metadata and added a log privacy regression test.
 - P2: the turn ring lacked a visible countdown and split pots named only the first winner. Added visible remaining seconds plus explicit winner/payout chips for every split-pot winner.
 - P2: the full hand-result card covered the community cards during review. Moved it below the header, added an accessible collapse/restore control, and measured zero overlap at 390×844.
+- P2: the first collapsed summary omitted the winning category and used a very small toggle. Kept the hand category/fold reason visible and raised the toggle to a measured 44 px touch height.
 - P2: the original bottom utility navigation competed with primary actions. Replaced it with top-level lineup, invite, and settings controls.
 - Recheck: all P1/P2 findings fixed; browser console clean; no overflow at target viewports.
 

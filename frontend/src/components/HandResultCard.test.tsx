@@ -47,6 +47,7 @@ describe('HandResultCard', () => {
     fireEvent.click(screen.getByRole('button', { name: '收起结果' }))
     expect(screen.queryByLabelText('Hero 手牌')).not.toBeInTheDocument()
     expect(screen.getByText('Hero 获胜')).toBeInTheDocument()
+    expect(screen.getByText('A高顺子')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '查看结果' }))
     expect(screen.getByLabelText('Hero 手牌')).toHaveTextContent('A♠K♦')
   })

@@ -17,8 +17,11 @@ export function HandResultCard({ language, result }: { language: Language; resul
   const toggleLabel = collapsed
     ? (language === 'zh' ? '查看结果' : 'View result')
     : (language === 'zh' ? '收起结果' : 'Collapse result')
+  const collapsedSummary = !result.is_showdown || result.win_reason === 'others_folded'
+    ? (language === 'zh' ? '其他玩家弃牌' : 'Others folded')
+    : winningPlayer?.hand_description
   return <section className={`hand-result-card ${collapsed ? 'collapsed' : ''}`} role="status">
-    <header><small>{language === 'zh' ? '本手结果' : 'Hand result'}</small><strong>{title}</strong>{!split && <span>+{winner?.amount ?? result.pot}</span>}<button onClick={() => setCollapsed((value) => !value)} aria-expanded={!collapsed}>{toggleLabel}</button></header>
+    <header><small>{language === 'zh' ? '本手结果' : 'Hand result'}</small><strong><span className="result-title">{title}</span>{collapsed && collapsedSummary && <em>{collapsedSummary}</em>}</strong>{!split && <span className="result-payout">+{winner?.amount ?? result.pot}</span>}<button onClick={() => setCollapsed((value) => !value)} aria-expanded={!collapsed}>{toggleLabel}</button></header>
     {!collapsed && <div className="result-details">
     {split && <div className="winner-payouts">{result.winners.map((entry) => <span key={entry.player_id || entry.nickname}>{entry.nickname} +{entry.amount}</span>)}</div>}
     {!result.is_showdown || result.win_reason === 'others_folded'
