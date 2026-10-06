@@ -10,6 +10,10 @@ const messages = {
     reconnecting: '正在重新连接…', offline: '连接已断开，正在保留座位', settings: '设置', history: '记录', analysis: '分析', sound: '音效', music: '背景音乐', reducedMotion: '减少动态效果', language: '语言',
     nextHand: '准备下一局', leave: '离开牌桌', dissolve: '解散房间', live: '实时牌桌', secure: '服务器权威结算', loading: '正在准备牌桌…', retry: '重试', raiseTo: '加注到', cancel: '取消', confirm: '确认', close: '关闭',
     practiceOnly: '仅在单人与机器人练习时开放', analysisHint: '基础局面分析：不计牌，不代替你决策。', noHistory: '本局暂无已记录动作',
+    soloChallenge: '单人挑战 · 公平机器人', challengeHero: '选择一桌有性格的对手。它们会读局、会诈唬，但绝不会偷看你的底牌。', challengeBots: '挑战机器人', challengeHint: '选择难度和对手阵容，马上开局。',
+    setupChallenge: '设置机器人挑战', chooseOpponents: '选择你的对手', difficulty: '难度', casual: '休闲', regular: '常规', expert: '高手', casualHint: '打法直观', regularHint: '会读位置', expertHint: '近似 GTO',
+    tableSize: '牌桌人数', headsUp: '单挑', fourPlayers: '四人桌', sixPlayers: '六人桌', opponentLineup: '自动阵容', startChallenge: '开始挑战', creatingTable: '正在准备牌桌…', fairBotNote: '所有机器人公平游戏，不读取隐藏底牌。',
+    balanced: '理性哥', aggressive: '深海鱼', tight: '冷静先生', caller: '小雨', tricky: '玫瑰',
   },
   en: {
     brand: 'NOCTURNE POKER', tagline: 'One private table. One proper game.', nickname: 'Nickname', nicknameHint: 'e.g. River', enterRoom: 'Enter the room',
@@ -20,6 +24,10 @@ const messages = {
     reconnecting: 'Reconnecting…', offline: 'Connection lost. Your seat is being held.', settings: 'Settings', history: 'History', analysis: 'Analysis', sound: 'Sound effects', music: 'Background music', reducedMotion: 'Reduce motion', language: 'Language',
     nextHand: 'Ready for next hand', leave: 'Leave table', dissolve: 'Dissolve room', live: 'Live table', secure: 'Server-authoritative play', loading: 'Preparing your table…', retry: 'Retry', raiseTo: 'Raise to', cancel: 'Cancel', confirm: 'Confirm', close: 'Close',
     practiceOnly: 'Available only in solo bot practice', analysisHint: 'Basic table analysis only. No card counting or automated decisions.', noHistory: 'No recorded action in this hand yet',
+    soloChallenge: 'Solo challenge · Fair bots', challengeHero: 'Pick a table of memorable opponents. They read the game and bluff, but never see your hidden cards.', challengeBots: 'Challenge bots', challengeHint: 'Choose a difficulty and lineup, then deal in.',
+    setupChallenge: 'Set up bot challenge', chooseOpponents: 'Choose your opponents', difficulty: 'Difficulty', casual: 'Casual', regular: 'Regular', expert: 'Expert', casualHint: 'Straightforward', regularHint: 'Position-aware', expertHint: 'Approx. GTO',
+    tableSize: 'Table size', headsUp: 'Heads-up', fourPlayers: 'Four players', sixPlayers: 'Six players', opponentLineup: 'Auto lineup', startChallenge: 'Start challenge', creatingTable: 'Preparing table…', fairBotNote: 'All bots play fair and never inspect hidden cards.',
+    balanced: 'Rational', aggressive: 'Deep Sea', tight: 'Mr Calm', caller: 'Rain', tricky: 'Rose',
   },
 } as const
 

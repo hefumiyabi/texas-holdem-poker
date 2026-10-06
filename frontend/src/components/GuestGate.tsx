@@ -18,7 +18,7 @@ export function GuestGate({ language, onContinue, error }: { language: Language;
     <section className="gate-card">
       <div className="brand-mark"><Spade weight="fill" /><span>{translate(language, 'brand')}</span></div>
       <p className="eyebrow"><ShieldCheck weight="fill" /> {translate(language, 'privatePlay')}</p>
-      <h1>{language === 'zh' ? '把好友叫上，' : 'Bring your people.'}<br/><em>{language === 'zh' ? '牌桌已经准备好。' : 'The table is ready.'}</em></h1>
+      <h1>{language === 'zh' ? '遇见会记住的对手，' : 'Meet opponents worth remembering.'}<br/><em>{language === 'zh' ? '打出只属于你的牌局。' : 'Play a table that feels alive.'}</em></h1>
       <p className="lede">{translate(language, 'tagline')}</p>
       <form onSubmit={submit} className="gate-form">
         <label htmlFor="nickname">{translate(language, 'nickname')}</label>
@@ -30,4 +30,3 @@ export function GuestGate({ language, onContinue, error }: { language: Language;
     </section>
   </main>
 }
-

@@ -1,5 +1,13 @@
 export type Language = 'zh' | 'en'
 export type ConnectionState = 'connecting' | 'connected' | 'reconnecting' | 'offline'
+export type BotDifficulty = 'beginner' | 'intermediate' | 'advanced'
+export type BotPersona = 'balanced' | 'aggressive' | 'tight' | 'caller' | 'tricky'
+
+export interface ChallengeConfig {
+  difficulty: BotDifficulty
+  seatCount: 2 | 4 | 6
+  personas: BotPersona[]
+}
 
 export interface User {
   id: string
@@ -26,6 +34,9 @@ export interface Player {
   is_big_blind: boolean
   has_acted: boolean
   hole_cards?: Card[]
+  bot_level?: BotDifficulty
+  bot_persona?: BotPersona
+  persona_label?: string
 }
 
 export interface RoomInfo {
@@ -40,6 +51,8 @@ export interface RoomInfo {
   initial_chips?: number
   player_count?: number
   host?: { id?: string; nickname: string } | null
+  mode?: 'private' | 'bot_challenge'
+  difficulty?: BotDifficulty | null
 }
 
 export interface TableInfo {
@@ -65,4 +78,3 @@ export interface RoomSnapshot {
   room: RoomInfo
   table: TableInfo
 }
-
