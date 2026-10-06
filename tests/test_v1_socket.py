@@ -3,6 +3,7 @@ import os
 import tempfile
 import threading
 import unittest
+from unittest import mock
 
 
 class V1SocketTestCase(unittest.TestCase):
@@ -40,6 +41,15 @@ class V1SocketTestCase(unittest.TestCase):
     def create_room(self, nickname="Host"):
         client, player = self.guest_client(nickname)
         response = client.post("/api/v1/rooms", json={"title": "Friends", "max_players": 6})
+        self.assertEqual(response.status_code, 201)
+        return client, player, response.get_json()["room"]
+
+    def create_challenge(self, nickname="Coach Hero"):
+        client, player = self.guest_client(nickname)
+        response = client.post("/api/v1/rooms", json={
+            "mode": "bot_challenge", "difficulty": "intermediate", "seat_count": 2,
+            "personas": ["balanced"],
+        })
         self.assertEqual(response.status_code, 201)
         return client, player, response.get_json()["room"]
 
@@ -149,6 +159,49 @@ class V1SocketTestCase(unittest.TestCase):
         errors = self.events_named(host_socket, "error")
 
         self.assertEqual(errors[-1]["code"], "vote_unavailable")
+
+    def test_challenge_snapshot_includes_cached_public_analysis_only_while_active(self):
+        _client, hero, room = self.create_challenge()
+        record = self.app_module.db.get_table(room["id"])
+        table = self.app_module.tables[room["id"]]
+        self.assertTrue(table.start_new_hand())
+        expected = {
+            "equity": 0.62, "pot_odds": 0.2, "recommended_action": "raise",
+            "reason": "value_advantage", "sample_size": 1500,
+        }
+
+        with mock.patch.object(self.app_module, "calculate_advice", return_value=expected) as advisor:
+            first = self.app_module._v1_snapshot(record, table, hero["id"])
+            second = self.app_module._v1_snapshot(record, table, hero["id"])
+            self.assertEqual(first["analysis"], expected)
+            self.assertEqual(second["analysis"], expected)
+            self.assertEqual(advisor.call_count, 1)
+            args = advisor.call_args.args
+            self.assertEqual(args[2], 1)
+            self.assertEqual(len(args), 7)
+            self.assertIsInstance(args[6], int)
+
+            table.pot += 1
+            self.app_module._v1_snapshot(record, table, hero["id"])
+            self.assertEqual(advisor.call_count, 2)
+
+        table.game_stage = self.app_module.GameStage.FINISHED
+        self.assertNotIn("analysis", self.app_module._v1_snapshot(record, table, hero["id"]))
+
+    def test_analysis_is_omitted_for_private_rooms_and_advisor_failures(self):
+        _client, hero, room = self.create_room()
+        record = self.app_module.db.get_table(room["id"])
+        table = self.app_module.tables[room["id"]]
+        guest = self.app_module.Player("guest", "Guest", 1000)
+        table.add_player(guest)
+        self.assertTrue(table.start_new_hand())
+        self.assertNotIn("analysis", self.app_module._v1_snapshot(record, table, hero["id"]))
+
+        record["room_mode"] = "bot_challenge"
+        with mock.patch.object(self.app_module, "calculate_advice", side_effect=RuntimeError("boom")):
+            snapshot = self.app_module._v1_snapshot(record, table, hero["id"])
+        self.assertIn("table", snapshot)
+        self.assertNotIn("analysis", snapshot)
 
     def test_concurrent_round_votes_start_exactly_one_hand(self):
         host_client, _, room = self.create_room()

@@ -76,6 +76,7 @@ class Table:
         self.created_at = time.time()
         self.last_activity = time.time()
         self.on_bot_action = None  # 机器人完成一次行动后的回调钩子（由app层设置，用于逐步广播）
+        self._advice_cache: Dict = {}
     
     def add_player(self, player: Player) -> bool:
         """添加玩家到牌桌"""
@@ -139,6 +140,8 @@ class Table:
         active_players = [p for p in ordered if p.status != PlayerStatus.DISCONNECTED and p.chips > 0]
         if len(active_players) < 2:
             return False
+
+        self._advice_cache.clear()
 
         # 庄家按座位顺序轮换到下一位有筹码的玩家（第一手牌为第一位）
         if self.dealer_id is None or self.hand_number == 0:

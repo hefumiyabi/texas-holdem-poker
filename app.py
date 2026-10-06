@@ -58,6 +58,7 @@ import json
 from poker_engine import Player, Table, Bot, BotLevel, BotPersona, get_bot_profile
 from poker_engine.player import PlayerAction, PlayerStatus
 from poker_engine.table import GameStage
+from poker_engine.advisor import calculate_advice
 from database import db
 from game_logger import (
     log_table_created, log_hand_started, log_hand_ended, 
@@ -1458,11 +1459,41 @@ def _v1_room_context(require_host: bool = False):
 
 
 def _v1_snapshot(record: Dict, table: Table, viewer_id: str) -> Dict:
-    return {
+    payload = {
         'viewer_id': viewer_id,
         'room': _room_details(record, viewer_id),
         'table': table.get_table_state(viewer_id),
     }
+    if record.get('room_mode') != 'bot_challenge':
+        return payload
+    if table.game_stage not in (GameStage.PRE_FLOP, GameStage.FLOP, GameStage.TURN, GameStage.RIVER):
+        return payload
+    viewer = table.get_player(viewer_id)
+    if not viewer or len(viewer.hole_cards) != 2:
+        return payload
+    opponents = [
+        player for player in table.players
+        if player.id != viewer_id and player.status in (PlayerStatus.PLAYING, PlayerStatus.ALL_IN)
+    ]
+    if not opponents:
+        return payload
+    key = (
+        table.hand_number, viewer_id, tuple(map(str, viewer.hole_cards)),
+        tuple(map(str, table.community_cards)), tuple(player.id for player in opponents),
+        table.pot, table.current_bet, viewer.current_bet, table.min_raise_to(),
+    )
+    try:
+        if key not in table._advice_cache:
+            if len(table._advice_cache) >= 32:
+                table._advice_cache.clear()
+            table._advice_cache[key] = calculate_advice(
+                viewer.hole_cards, table.community_cards, len(opponents), table.pot,
+                table.current_bet, viewer.current_bet, table.min_raise_to(),
+            )
+        payload['analysis'] = table._advice_cache[key]
+    except Exception as exc:
+        print(f"GTO analysis unavailable for table {table.id}: {type(exc).__name__}")
+    return payload
 
 
 def _emit_v1_snapshots(table_id: str, event_name: str = 'room:snapshot'):
