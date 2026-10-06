@@ -10,7 +10,7 @@ Visual reference: `/Users/guangkaichen/.codex/generated_images/01a105cb-5b26-7e0
 - `npm run build`: TypeScript and Vite production build passed.
 - `.venv/bin/python -m unittest discover -s tests`: 59 tests passed.
 - Browser console: no warnings or errors during the complete flow.
-- Render `/healthz`: HTTP 200 with `{ "status": "ok" }`; deployed bundle matched local `index-CEvF-XUU.js` / `index-BVe7bYAY.css`.
+- Render `/healthz`: HTTP 200 with `{ "status": "ok" }`; deployed bundle matched local `index-DE0cZc0E.js` / `index-kY8P_iKg.css`.
 
 ## Browser acceptance
 
@@ -41,6 +41,7 @@ Completed in the Codex in-app browser against `http://127.0.0.1:8899`:
 23. At `390×844`, verified the friend-room form shows CNY defaults (`¥1,000`, `¥10/¥20`), switches to JPY presets (`JP¥10,000 / JP¥200,000 / JP¥500,000`), and exposes custom buy-in and blind inputs.
 24. Created JPY room `N33SY8` with `JP¥345,678` and `JP¥750 / JP¥1,500`; entered and refreshed the table, confirming the currency, buy-in, blinds, pot, seat stack, and hero stack persisted with no console warnings or errors.
 25. Returned home and created CNY room `CQJWTK` with the 4-player / `¥5,000` preset; entered the table and confirmed `¥10 / ¥20`, `¥0` pot, and `¥5,000` stacks.
+26. Verified the deployed Render API by creating JPY room `42VX8L`; the response preserved `currency=JPY`, `initial_chips=345678`, `small_blind=750`, and `big_blind=1500`. The deployed guest gate loaded with no browser warnings or errors.
 
 ## Responsive evidence
 
