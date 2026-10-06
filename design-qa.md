@@ -6,9 +6,9 @@ Visual reference: `/Users/guangkaichen/.codex/generated_images/01a105cb-5b26-7e0
 
 ## Automated verification
 
-- `npm test`: 15 files, 27 tests passed.
+- `npm test`: 18 files, 33 tests passed.
 - `npm run build`: TypeScript and Vite production build passed.
-- `.venv/bin/python -m pytest -q`: 48 tests passed.
+- `.venv/bin/python -m pytest -q`: 63 tests passed.
 - Browser console: no warnings or errors during the complete flow.
 
 ## Browser acceptance
@@ -26,6 +26,10 @@ Completed in the Codex in-app browser against `http://127.0.0.1:8899`:
 9. Exercised the friend-invite action and reduced-motion preference.
 10. Verified the raise confirmation uses a high-contrast gold button with a distinct bold amount (`确认 64`).
 11. Verified a `跟注 $10` action toast appears immediately, disappears after 1.2 seconds, and leaves the hero cards unobstructed.
+12. Verified the 30-second human countdown, persistent folded badges, and difficulty-based bot thinking state are visible on the correct seats.
+13. Verified the compact GTO reference expands to show equity, pot odds, and a plain-language recommendation without covering the action buttons.
+14. Reached a real showdown and verified the result card exposed both legal hands, named the winning `A高同花`, and explained that it beat `A高牌` while leaving the hero cards visible.
+15. Verified current blinds and the number of hands until the next increase are visible; the second hand correctly changed the countdown from five to four.
 
 ## Responsive evidence
 
@@ -50,6 +54,8 @@ The implementation retains the selected reference’s warm private-lounge atmosp
 - P2: added explicit 1,000 / 5,000 / 10,000 buy-in controls and kept the setup sheet scroll-safe on short phones.
 - P2: the raise confirmation inherited the dark generic sheet-button background. Added a dedicated high-contrast confirmation treatment and bold tabular amount.
 - P2: resolved-action messages persisted over the hero area. Moved them to the top of the stage, made them pointer-transparent, and auto-clear them after 1.2 seconds or immediately on hand completion.
+- P2: hand completion did not explain why a player won. Added a privacy-safe result card with revealed cards, the winning hand category/description, and the strongest defeated hand.
+- P2: blind stakes never progressed. Added a stable five-hand blind level that doubles only when a new hand begins and exposes the next increase in the table UI.
 - P2: the original bottom utility navigation competed with primary actions. Replaced it with top-level lineup, invite, and settings controls.
 - Recheck: all P1/P2 findings fixed; browser console clean; no overflow at target viewports.
 
