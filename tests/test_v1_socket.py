@@ -151,10 +151,16 @@ class V1SocketTestCase(unittest.TestCase):
         table.hand_number = 1
         host_socket.emit("hand:start", {})
         host_socket.get_received()
-        self.app_module.socketio.sleep(1.2)
-
-        events = host_socket.get_received()
-        pushed = [event for event in events if event["name"] in ("turn:changed", "hand:completed")]
+        pushed = []
+        for _ in range(30):
+            self.app_module.socketio.sleep(0.1)
+            events = host_socket.get_received()
+            pushed.extend(
+                event for event in events
+                if event["name"] in ("turn:changed", "hand:completed")
+            )
+            if pushed:
+                break
         self.assertTrue(pushed)
         self.assertIn("table", pushed[-1]["args"][0])
 

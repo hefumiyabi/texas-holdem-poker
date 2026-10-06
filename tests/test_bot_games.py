@@ -4,6 +4,7 @@
 """
 import contextlib, io, os, random, sys, time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_orig_sleep = time.sleep
 time.sleep = lambda s: None
 from poker_engine.table import Table, GameStage
 from poker_engine.bot import Bot, BotLevel
@@ -13,7 +14,7 @@ from poker_engine.player import PlayerStatus, PlayerAction as A
 illegal = {}
 _orig_execute = Table._execute_action
 def _checked_execute(self, player, action, amount=0, strict=True):
-    if not strict:
+    if not strict and isinstance(player, Bot):
         owe = self.current_bet - player.current_bet
         max_to = player.current_bet + player.chips
         bad = ((action == A.CHECK and owe > 0)
@@ -50,3 +51,7 @@ print('bot hands:', hands, 'error:', err)
 print('illegal bot actions by level (total, illegal):', illegal)
 bad_levels = {k: v for k, v in illegal.items() if v[1] and k != 'god'}
 print('PASS 机器人只请求合法的下注/加注金额' if not bad_levels and err is None else f'FAIL 非法动作 {bad_levels} / {err}')
+Table._execute_action = _orig_execute
+time.sleep = _orig_sleep
+assert Table._execute_action is _orig_execute
+assert time.sleep is _orig_sleep
