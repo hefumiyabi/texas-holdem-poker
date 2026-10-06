@@ -20,7 +20,7 @@ export function ActionRail({ language, table, player, enabled, onAct }: { langua
       <div className="sheet-handle" />
       <div className="bet-heading"><span>{translate(language, actions.includes('raise') ? 'raiseTo' : 'bet')}</span><strong>{amount.toLocaleString()}</strong></div>
       <input aria-label={translate(language, 'raiseTo')} type="range" min={Math.min(min, max)} max={max} step={Math.max(1, table.big_blind || 1)} value={Math.min(amount, max)} onChange={(event) => setAmount(Number(event.target.value))} />
-      <div className="preset-row">{presets.map((preset) => <button key={preset.label} onClick={() => setAmount(preset.amount)}>{preset.label}</button>)}</div>
+      <div className="preset-row">{presets.map((preset, index) => <button key={preset.label} onClick={() => setAmount(preset.amount)}>{language === 'zh' ? ['½池', '¾池', '满池', '全下'][index] : ['½ pot', '¾ pot', 'Pot', 'All in'][index]}</button>)}</div>
       <div className="sheet-actions"><button onClick={() => setSizing(false)}>{translate(language, 'cancel')}</button><button className="gold-button" onClick={() => { onAct(actions.includes('raise') ? 'raise' : 'bet', amount); setSizing(false) }}>{translate(language, 'confirm')} {amount.toLocaleString()}</button></div>
     </div>}
     <div className="action-rail" aria-label="Poker actions">

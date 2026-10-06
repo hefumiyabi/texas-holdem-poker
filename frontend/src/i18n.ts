@@ -14,6 +14,7 @@ const messages = {
     setupChallenge: '设置机器人挑战', chooseOpponents: '选择你的对手', difficulty: '难度', casual: '休闲', regular: '常规', expert: '高手', casualHint: '打法直观', regularHint: '会读位置', expertHint: '近似 GTO',
     tableSize: '牌桌人数', headsUp: '单挑', fourPlayers: '四人桌', sixPlayers: '六人桌', opponentLineup: '自动阵容', startChallenge: '开始挑战', creatingTable: '正在准备牌桌…', fairBotNote: '所有机器人公平游戏，不读取隐藏底牌。',
     balanced: '理性哥', aggressive: '深海鱼', tight: '冷静先生', caller: '小雨', tricky: '玫瑰',
+    inviteFriend: '邀请好友', lineup: '对手阵容', opponents: '位对手', botThinking: '思考中', communityCards: '公共牌', emptySeat: '空座', emptySeats: '个空座', add: '添加', remove: '移除', change: '更换', betweenHandsOnly: '只能在两手牌之间调整阵容。',
   },
   en: {
     brand: 'NOCTURNE POKER', tagline: 'One private table. One proper game.', nickname: 'Nickname', nicknameHint: 'e.g. River', enterRoom: 'Enter the room',
@@ -28,6 +29,7 @@ const messages = {
     setupChallenge: 'Set up bot challenge', chooseOpponents: 'Choose your opponents', difficulty: 'Difficulty', casual: 'Casual', regular: 'Regular', expert: 'Expert', casualHint: 'Straightforward', regularHint: 'Position-aware', expertHint: 'Approx. GTO',
     tableSize: 'Table size', headsUp: 'Heads-up', fourPlayers: 'Four players', sixPlayers: 'Six players', opponentLineup: 'Auto lineup', startChallenge: 'Start challenge', creatingTable: 'Preparing table…', fairBotNote: 'All bots play fair and never inspect hidden cards.',
     balanced: 'Rational', aggressive: 'Deep Sea', tight: 'Mr Calm', caller: 'Rain', tricky: 'Rose',
+    inviteFriend: 'Invite friend', lineup: 'Opponent lineup', opponents: 'opponents', botThinking: 'Thinking', communityCards: 'Community cards', emptySeat: 'Open seat', emptySeats: 'open seats', add: 'Add', remove: 'Remove', change: 'Change', betweenHandsOnly: 'The lineup can only change between hands.',
   },
 } as const
 
