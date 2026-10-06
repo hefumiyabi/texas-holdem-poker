@@ -3,6 +3,7 @@ import os
 import re
 import tempfile
 import unittest
+import sqlite3
 
 
 class V1ApiTestCase(unittest.TestCase):
@@ -139,6 +140,87 @@ class V1ApiTestCase(unittest.TestCase):
         self.assertEqual(invalid.status_code, 400)
         self.assertEqual(client.get("/api/v1/rooms/ABC123").status_code, 404)
         self.assertEqual(client.post("/api/v1/rooms/ABC123/join", json={}).status_code, 404)
+
+    def test_bot_challenge_creates_the_requested_public_lineup(self):
+        client = self.app_module.app.test_client()
+        self.create_guest(client, "Hero")
+
+        response = client.post(
+            "/api/v1/rooms",
+            json={
+                "mode": "bot_challenge",
+                "difficulty": "advanced",
+                "seat_count": 6,
+                "personas": ["aggressive", "tight", "caller", "tricky", "balanced"],
+            },
+        )
+
+        self.assertEqual(response.status_code, 201, response.get_data(as_text=True))
+        room = response.get_json()["room"]
+        self.assertEqual(room["mode"], "bot_challenge")
+        self.assertEqual(room["difficulty"], "advanced")
+        rows = self.app_module.db.get_table_players(room["id"])
+        self.assertEqual(len(rows), 6)
+        self.assertEqual([row["bot_persona"] for row in rows[1:]], [
+            "aggressive", "tight", "caller", "tricky", "balanced"
+        ])
+        table = self.app_module.tables[room["id"]]
+        self.assertEqual([player.bot_level.value for player in table.players[1:]], ["advanced"] * 5)
+
+    def test_bot_challenge_defaults_and_supported_table_sizes(self):
+        for seats in (2, 4, 6):
+            client = self.app_module.app.test_client()
+            self.create_guest(client, f"Hero{seats}")
+
+            response = client.post(
+                "/api/v1/rooms",
+                json={"mode": "bot_challenge", "seat_count": seats},
+            )
+
+            self.assertEqual(response.status_code, 201, response.get_data(as_text=True))
+            room = response.get_json()["room"]
+            self.assertEqual(room["difficulty"], "intermediate")
+            self.assertEqual(len(self.app_module.db.get_table_players(room["id"])), seats)
+
+    def test_bot_challenge_rejects_invalid_personas_counts_and_god_mode(self):
+        client = self.app_module.app.test_client()
+        self.create_guest(client)
+
+        payloads = [
+            {"mode": "bot_challenge", "difficulty": "god", "seat_count": 2},
+            {"mode": "bot_challenge", "difficulty": "advanced", "seat_count": 3},
+            {"mode": "bot_challenge", "seat_count": 4, "personas": ["balanced"]},
+            {"mode": "bot_challenge", "seat_count": 2, "personas": ["unknown"]},
+        ]
+
+        for payload in payloads:
+            response = client.post("/api/v1/rooms", json=payload)
+            self.assertEqual(response.status_code, 400, payload)
+
+    def test_database_challenge_creation_rolls_back_on_partial_bot_failure(self):
+        from database import PokerDatabase
+
+        database = PokerDatabase(self.db_path)
+        host_id = database.create_user("AtomicHost")
+        duplicate_id = "duplicate-bot"
+        bots = [
+            {"id": duplicate_id, "nickname": "Bot A", "level": "beginner", "persona": "balanced"},
+            {"id": duplicate_id, "nickname": "Bot B", "level": "beginner", "persona": "tight"},
+        ]
+
+        with self.assertRaises(sqlite3.IntegrityError):
+            database.create_challenge_room(
+                title="Atomic",
+                created_by=host_id,
+                join_code="ATOM22",
+                difficulty="beginner",
+                max_players=4,
+                initial_chips=1000,
+                bots=bots,
+            )
+
+        self.assertIsNone(database.get_table_by_join_code("ATOM22"))
+        self.assertIsNone(database.get_user(duplicate_id))
 
 
 if __name__ == "__main__":

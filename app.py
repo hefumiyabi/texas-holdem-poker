@@ -55,7 +55,7 @@ import sqlite3
 from datetime import datetime
 import json
 
-from poker_engine import Player, Table, Bot, BotLevel
+from poker_engine import Player, Table, Bot, BotLevel, BotPersona, get_bot_profile
 from poker_engine.player import PlayerAction, PlayerStatus
 from poker_engine.table import GameStage
 from database import db
@@ -455,6 +455,52 @@ def _new_join_code() -> str:
     raise RuntimeError('无法生成唯一房间码')
 
 
+DEFAULT_BOT_PERSONAS = [
+    BotPersona.AGGRESSIVE,
+    BotPersona.TIGHT,
+    BotPersona.CALLER,
+    BotPersona.TRICKY,
+    BotPersona.BALANCED,
+]
+
+
+def _bot_spec(level: BotLevel, persona: BotPersona, suffix: int) -> Dict:
+    profile = get_bot_profile(persona)
+    return {
+        'id': str(uuid.uuid4()),
+        'nickname': f'{profile.nickname}{suffix}',
+        'level': level.value,
+        'persona': persona.value,
+    }
+
+
+def _parse_public_bot(level_name: str, persona_name: str):
+    try:
+        level = BotLevel(str(level_name).upper())
+    except ValueError:
+        try:
+            level = BotLevel[str(level_name).upper()]
+        except KeyError as exc:
+            raise ValueError('invalid bot level') from exc
+    if not level.is_public:
+        raise ValueError('invalid bot level')
+    try:
+        persona = BotPersona(str(persona_name).lower())
+    except ValueError as exc:
+        raise ValueError('invalid bot persona') from exc
+    return level, persona
+
+
+def _bot_from_spec(spec: Dict, chips: int) -> Bot:
+    return Bot(
+        spec['id'],
+        spec['nickname'],
+        chips,
+        BotLevel(spec['level']),
+        BotPersona(spec['persona']),
+    )
+
+
 def _table_from_record(record: Dict) -> Table:
     table = tables.get(record['id'])
     if table:
@@ -471,12 +517,18 @@ def _table_from_record(record: Dict) -> Table:
     )
     tables[record['id']] = table
     for row in db.get_table_players(record['id']):
-        if row.get('is_bot'):
-            continue
         user = db.get_user(row['player_id'])
         if not user:
             continue
-        player = players.get(row['player_id']) or Player(row['player_id'], user['nickname'], row['chips'])
+        if row.get('is_bot'):
+            try:
+                level = BotLevel(str(row.get('bot_level') or 'beginner').lower())
+                persona = BotPersona(str(row.get('bot_persona') or 'balanced').lower())
+            except ValueError:
+                level, persona = BotLevel.BEGINNER, BotPersona.BALANCED
+            player = Bot(row['player_id'], user['nickname'], row['chips'], level, persona)
+        else:
+            player = players.get(row['player_id']) or Player(row['player_id'], user['nickname'], row['chips'])
         players[player.id] = player
         table.add_player_at_position(player, row['position'])
     return table
@@ -494,6 +546,8 @@ def _room_preview(record: Dict) -> Dict:
         'initial_chips': record['initial_chips'],
         'game_mode': record.get('game_mode', 'blinds'),
         'ante_percentage': record.get('ante_percentage', 0.02),
+        'mode': record.get('room_mode', 'private'),
+        'difficulty': record.get('bot_difficulty'),
         'player_count': len(room_players),
         'host': {'nickname': host['nickname']} if host else None,
     }
@@ -592,11 +646,12 @@ def delete_guest_session_v1():
 @_require_guest
 def create_private_room_v1(guest):
     data = request.get_json(silent=True) or {}
-    title = str(data.get('title', '好友牌桌')).strip()
+    room_mode = str(data.get('mode', 'private')).lower()
+    title = str(data.get('title', '人格牌局' if room_mode == 'bot_challenge' else '好友牌桌')).strip()
     try:
         small_blind = int(data.get('small_blind', 10))
         big_blind = int(data.get('big_blind', 20))
-        max_players = int(data.get('max_players', 6))
+        max_players = int(data.get('seat_count', data.get('max_players', 6)))
         initial_chips = int(data.get('initial_chips', 1000))
         ante_percentage = float(data.get('ante_percentage', 0.02))
     except (TypeError, ValueError):
@@ -604,10 +659,45 @@ def create_private_room_v1(guest):
     game_mode = str(data.get('game_mode', 'blinds'))
     if (not title or len(title) > 30 or small_blind < 1 or big_blind <= small_blind
             or max_players not in (2, 4, 6, 9) or initial_chips not in (500, 1000, 2000, 5000, 10000)
-            or game_mode not in ('blinds', 'ante') or not 0.005 <= ante_percentage <= 0.1):
+            or game_mode not in ('blinds', 'ante') or not 0.005 <= ante_percentage <= 0.1
+            or room_mode not in ('private', 'bot_challenge')):
         return jsonify({'success': False, 'message': '房间参数无效'}), 400
 
     join_code = _new_join_code()
+    if room_mode == 'bot_challenge':
+        if max_players not in (2, 4, 6):
+            return jsonify({'success': False, 'message': '挑战桌人数无效'}), 400
+        difficulty = str(data.get('difficulty', 'intermediate')).lower()
+        raw_personas = data.get('personas')
+        if raw_personas is None:
+            personas = DEFAULT_BOT_PERSONAS[:max_players - 1]
+        elif not isinstance(raw_personas, list) or len(raw_personas) != max_players - 1:
+            return jsonify({'success': False, 'message': '机器人阵容无效'}), 400
+        else:
+            try:
+                personas = [BotPersona(str(value).lower()) for value in raw_personas]
+            except (TypeError, ValueError):
+                return jsonify({'success': False, 'message': '机器人阵容无效'}), 400
+        try:
+            level, _ = _parse_public_bot(difficulty, BotPersona.BALANCED.value)
+        except ValueError:
+            return jsonify({'success': False, 'message': '机器人难度无效'}), 400
+        bot_specs = [_bot_spec(level, persona, index + 1) for index, persona in enumerate(personas)]
+        table_id = db.create_challenge_room(
+            title=title,
+            created_by=guest['player_id'],
+            join_code=join_code,
+            difficulty=level.value,
+            max_players=max_players,
+            initial_chips=initial_chips,
+            bots=bot_specs,
+            small_blind=small_blind,
+            big_blind=big_blind,
+        )
+        record = db.get_table(table_id)
+        _table_from_record(record)
+        return jsonify({'success': True, 'room': _room_details(record, guest['player_id'])}), 201
+
     table_id = db.create_table(
         title=title,
         created_by=guest['player_id'],
@@ -620,6 +710,7 @@ def create_private_room_v1(guest):
         join_code=join_code,
         host_id=guest['player_id'],
         visibility='private',
+        room_mode='private',
     )
     db.join_table(table_id, guest['player_id'], 0)
     record = db.get_table(table_id)
@@ -1417,41 +1508,87 @@ def handle_v1_bot_add(data):
     if not context:
         return
     _session, record, table = context
+    if table.game_stage != GameStage.WAITING:
+        _v1_error('hand_in_progress', '牌局进行中不能调整机器人')
+        return
     if len(table.players) >= table.max_players:
         _v1_error('room_full', '房间已满')
         return
-    level_name = str((data or {}).get('level', 'beginner')).upper()
     try:
-        level = BotLevel[level_name]
-    except KeyError:
-        _v1_error('invalid_bot_level', '机器人等级无效')
+        level, persona = _parse_public_bot(
+            str((data or {}).get('level', 'beginner')),
+            str((data or {}).get('persona', 'balanced')),
+        )
+    except ValueError as exc:
+        code = 'invalid_bot_persona' if 'persona' in str(exc) else 'invalid_bot_level'
+        _v1_error(code, '机器人人格无效' if code.endswith('persona') else '机器人等级无效')
         return
-    bot_id = str(uuid.uuid4())
-    bot_name = {
-        BotLevel.BEGINNER: '松果',
-        BotLevel.INTERMEDIATE: '黑桃',
-        BotLevel.ADVANCED: '河牌大师',
-        BotLevel.GOD: '德州之神',
-    }[level]
     suffix = 1 + sum(1 for player in table.players if player.is_bot)
-    bot = Bot(bot_id, f'{bot_name}{suffix}', table.initial_chips, level)
-    if not table.add_player(bot):
+    spec = _bot_spec(level, persona, suffix)
+    position = next((seat for seat, player in table.seats.items() if player is None), None)
+    if position is None:
         _v1_error('room_full', '房间已满')
         return
-    with db.get_connection() as conn:
-        now = time.time()
-        conn.execute('''
-            INSERT INTO users (id, nickname, chips, created_at, last_active)
-            VALUES (?, ?, ?, ?, ?)
-        ''', (bot_id, bot.nickname, table.initial_chips, now, now))
-        conn.commit()
-    db.join_table(record['id'], bot_id)
-    with db.get_connection() as conn:
-        conn.execute('''
-            UPDATE table_players SET is_bot = 1, bot_level = ?
-            WHERE table_id = ? AND player_id = ?
-        ''', (level.value, record['id'], bot_id))
-        conn.commit()
+    db.add_table_bot(record['id'], spec, table.initial_chips, position)
+    bot = _bot_from_spec(spec, table.initial_chips)
+    table.add_player_at_position(bot, position)
+    players[bot.id] = bot
+    _emit_v1_snapshots(record['id'])
+
+
+def _v1_bot_target(data):
+    context = _v1_room_context(require_host=True)
+    if not context:
+        return None
+    _session, record, table = context
+    if table.game_stage != GameStage.WAITING:
+        _v1_error('hand_in_progress', '牌局进行中不能调整机器人')
+        return None
+    player_id = str((data or {}).get('player_id', ''))
+    player = table.get_player(player_id)
+    if not player or not player.is_bot:
+        _v1_error('bot_not_found', '机器人不存在')
+        return None
+    return record, table, player
+
+
+@socketio.on('bot:remove')
+def handle_v1_bot_remove(data):
+    target = _v1_bot_target(data)
+    if not target:
+        return
+    record, table, player = target
+    if not db.remove_table_bot(record['id'], player.id):
+        _v1_error('bot_not_found', '机器人不存在')
+        return
+    table.remove_player(player.id)
+    players.pop(player.id, None)
+    _emit_v1_snapshots(record['id'])
+
+
+@socketio.on('bot:replace')
+def handle_v1_bot_replace(data):
+    target = _v1_bot_target(data)
+    if not target:
+        return
+    record, table, player = target
+    try:
+        level, persona = _parse_public_bot(
+            str((data or {}).get('level', 'beginner')),
+            str((data or {}).get('persona', 'balanced')),
+        )
+    except ValueError as exc:
+        code = 'invalid_bot_persona' if 'persona' in str(exc) else 'invalid_bot_level'
+        _v1_error(code, '机器人人格无效' if code.endswith('persona') else '机器人等级无效')
+        return
+    suffix = 1 + sum(1 for candidate in table.players if candidate.is_bot and candidate.id != player.id)
+    spec = _bot_spec(level, persona, suffix)
+    position = db.replace_table_bot(record['id'], player.id, spec, table.initial_chips)
+    table.remove_player(player.id)
+    players.pop(player.id, None)
+    replacement = _bot_from_spec(spec, table.initial_chips)
+    table.add_player_at_position(replacement, position)
+    players[replacement.id] = replacement
     _emit_v1_snapshots(record['id'])
 
 

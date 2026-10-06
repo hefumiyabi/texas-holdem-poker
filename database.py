@@ -63,6 +63,8 @@ class PokerDatabase:
                     created_at REAL NOT NULL,
                     last_activity REAL NOT NULL,
                     is_active BOOLEAN DEFAULT 1,
+                    room_mode TEXT NOT NULL DEFAULT 'private',
+                    bot_difficulty TEXT,
                     FOREIGN KEY (created_by) REFERENCES users (id),
                     FOREIGN KEY (current_player_id) REFERENCES users (id)
                 )
@@ -82,6 +84,7 @@ class PokerDatabase:
                     has_acted BOOLEAN DEFAULT 0,
                     is_bot BOOLEAN DEFAULT 0,
                     bot_level TEXT,
+                    bot_persona TEXT,
                     joined_at REAL NOT NULL,
                     FOREIGN KEY (table_id) REFERENCES tables (id),
                     FOREIGN KEY (player_id) REFERENCES users (id),
@@ -113,6 +116,15 @@ class PokerDatabase:
                 cursor.execute('ALTER TABLE tables ADD COLUMN host_id TEXT')
             if 'visibility' not in table_columns:
                 cursor.execute("ALTER TABLE tables ADD COLUMN visibility TEXT NOT NULL DEFAULT 'private'")
+            if 'room_mode' not in table_columns:
+                cursor.execute("ALTER TABLE tables ADD COLUMN room_mode TEXT NOT NULL DEFAULT 'private'")
+            if 'bot_difficulty' not in table_columns:
+                cursor.execute('ALTER TABLE tables ADD COLUMN bot_difficulty TEXT')
+            player_columns = {
+                row['name'] for row in cursor.execute('PRAGMA table_info(table_players)').fetchall()
+            }
+            if 'bot_persona' not in player_columns:
+                cursor.execute('ALTER TABLE table_players ADD COLUMN bot_persona TEXT')
             cursor.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_tables_join_code ON tables(join_code)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_guest_sessions_player ON guest_sessions(player_id)')
             
@@ -191,7 +203,8 @@ class PokerDatabase:
                     big_blind: int = 20, max_players: int = 9, initial_chips: int = 1000,
                     game_mode: str = "blinds", ante_percentage: float = 0.02,
                     join_code: Optional[str] = None, host_id: Optional[str] = None,
-                    visibility: str = "private") -> str:
+                    visibility: str = "private", room_mode: str = "private",
+                    bot_difficulty: Optional[str] = None) -> str:
         """创建新房间"""
         with self.lock:
             with self.get_connection() as conn:
@@ -204,15 +217,109 @@ class PokerDatabase:
                     INSERT INTO tables (
                         id, title, small_blind, big_blind, max_players, initial_chips,
                         game_mode, ante_percentage, created_by, created_at, last_activity,
-                        join_code, host_id, visibility
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        join_code, host_id, visibility, room_mode, bot_difficulty
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (table_id, title, small_blind, big_blind, max_players, 
                       initial_chips, game_mode, ante_percentage, created_by, 
-                      current_time, current_time, join_code, host_id or created_by, visibility))
+                      current_time, current_time, join_code, host_id or created_by, visibility,
+                      room_mode, bot_difficulty))
                 
                 conn.commit()
                 print(f"创建新房间: {title} (ID: {table_id}) by {created_by}, 模式: {game_mode}")
                 return table_id
+
+    def create_challenge_room(self, title: str, created_by: str, join_code: str,
+                              difficulty: str, max_players: int, initial_chips: int,
+                              bots: List[Dict], small_blind: int = 10,
+                              big_blind: int = 20) -> str:
+        """Create the challenge room, host seat, and bot lineup in one transaction."""
+        with self.lock:
+            with self.get_connection() as conn:
+                table_id = str(uuid.uuid4())
+                now = time.time()
+                conn.execute('''
+                    INSERT INTO tables (
+                        id, title, small_blind, big_blind, max_players, initial_chips,
+                        game_mode, ante_percentage, created_by, created_at, last_activity,
+                        join_code, host_id, visibility, room_mode, bot_difficulty
+                    ) VALUES (?, ?, ?, ?, ?, ?, 'blinds', 0.02, ?, ?, ?, ?, ?, 'private',
+                              'bot_challenge', ?)
+                ''', (table_id, title, small_blind, big_blind, max_players, initial_chips,
+                      created_by, now, now, join_code, created_by, difficulty))
+                conn.execute('''
+                    INSERT INTO table_players (table_id, player_id, position, chips, joined_at)
+                    VALUES (?, ?, 0, ?, ?)
+                ''', (table_id, created_by, initial_chips, now))
+                for position, bot in enumerate(bots, start=1):
+                    conn.execute('''
+                        INSERT INTO users (id, nickname, chips, created_at, last_active)
+                        VALUES (?, ?, ?, ?, ?)
+                    ''', (bot['id'], bot['nickname'], initial_chips, now, now))
+                    conn.execute('''
+                        INSERT INTO table_players (
+                            table_id, player_id, position, chips, is_bot, bot_level,
+                            bot_persona, joined_at
+                        ) VALUES (?, ?, ?, ?, 1, ?, ?, ?)
+                    ''', (table_id, bot['id'], position, initial_chips, bot['level'],
+                          bot['persona'], now))
+                conn.commit()
+                return table_id
+
+    def add_table_bot(self, table_id: str, bot: Dict, chips: int, position: int) -> None:
+        with self.lock:
+            with self.get_connection() as conn:
+                now = time.time()
+                conn.execute('''
+                    INSERT INTO users (id, nickname, chips, created_at, last_active)
+                    VALUES (?, ?, ?, ?, ?)
+                ''', (bot['id'], bot['nickname'], chips, now, now))
+                conn.execute('''
+                    INSERT INTO table_players (
+                        table_id, player_id, position, chips, is_bot, bot_level,
+                        bot_persona, joined_at
+                    ) VALUES (?, ?, ?, ?, 1, ?, ?, ?)
+                ''', (table_id, bot['id'], position, chips, bot['level'], bot['persona'], now))
+                conn.commit()
+
+    def remove_table_bot(self, table_id: str, player_id: str) -> bool:
+        with self.lock:
+            with self.get_connection() as conn:
+                row = conn.execute('''
+                    SELECT position FROM table_players
+                    WHERE table_id = ? AND player_id = ? AND is_bot = 1
+                ''', (table_id, player_id)).fetchone()
+                if not row:
+                    return False
+                conn.execute('DELETE FROM table_players WHERE table_id = ? AND player_id = ?',
+                             (table_id, player_id))
+                conn.execute('DELETE FROM users WHERE id = ?', (player_id,))
+                conn.commit()
+                return True
+
+    def replace_table_bot(self, table_id: str, player_id: str, bot: Dict, chips: int) -> int:
+        with self.lock:
+            with self.get_connection() as conn:
+                row = conn.execute('''
+                    SELECT position FROM table_players
+                    WHERE table_id = ? AND player_id = ? AND is_bot = 1
+                ''', (table_id, player_id)).fetchone()
+                if not row:
+                    raise ValueError('bot not found')
+                position = row['position']
+                now = time.time()
+                conn.execute('''
+                    INSERT INTO users (id, nickname, chips, created_at, last_active)
+                    VALUES (?, ?, ?, ?, ?)
+                ''', (bot['id'], bot['nickname'], chips, now, now))
+                conn.execute('''
+                    UPDATE table_players SET player_id = ?, chips = ?, current_bet = 0,
+                        status = 'waiting', hole_cards = '[]', has_acted = 0,
+                        bot_level = ?, bot_persona = ?, joined_at = ?
+                    WHERE table_id = ? AND player_id = ? AND is_bot = 1
+                ''', (bot['id'], chips, bot['level'], bot['persona'], now, table_id, player_id))
+                conn.execute('DELETE FROM users WHERE id = ?', (player_id,))
+                conn.commit()
+                return position
     
     def get_table(self, table_id: str) -> Optional[Dict]:
         """获取房间信息"""

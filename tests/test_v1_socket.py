@@ -164,6 +164,65 @@ class V1SocketTestCase(unittest.TestCase):
         self.assertTrue(pushed)
         self.assertIn("table", pushed[-1]["args"][0])
 
+    def test_host_can_manage_persona_bots_only_while_waiting(self):
+        host_client, _, room = self.create_room()
+        host_socket = self.app_module.socketio.test_client(
+            self.app_module.app, flask_test_client=host_client
+        )
+        host_socket.emit("room:join", {"join_code": room["join_code"]})
+        host_socket.get_received()
+
+        host_socket.emit("bot:add", {"level": "god", "persona": "balanced"})
+        host_socket.emit("bot:add", {"level": "advanced", "persona": "unknown"})
+        errors = self.events_named(host_socket, "error")
+        self.assertEqual([error["code"] for error in errors], [
+            "invalid_bot_level", "invalid_bot_persona"
+        ])
+
+        host_socket.emit("bot:add", {"level": "advanced", "persona": "aggressive"})
+        snapshots = self.events_named(host_socket, "room:snapshot")
+        bot = next(player for player in snapshots[-1]["table"]["players"] if player["is_bot"])
+        self.assertEqual(bot["bot_level"], "advanced")
+        self.assertEqual(bot["bot_persona"], "aggressive")
+        self.assertEqual(bot["persona_label"], "爱诈唬")
+        self.assertNotIn("hole_cards", bot)
+
+        host_socket.emit("bot:replace", {
+            "player_id": bot["id"], "level": "intermediate", "persona": "tricky"
+        })
+        replaced = self.events_named(host_socket, "room:snapshot")[-1]
+        replacement = next(player for player in replaced["table"]["players"] if player["is_bot"])
+        self.assertEqual(replacement["bot_persona"], "tricky")
+        self.assertEqual(len(replaced["table"]["players"]), 2)
+
+        host_socket.emit("bot:remove", {"player_id": replacement["id"]})
+        removed = self.events_named(host_socket, "room:snapshot")[-1]
+        self.assertEqual(len(removed["table"]["players"]), 1)
+
+    def test_bot_changes_reject_full_room_and_active_hand(self):
+        host_client, _, room = self.create_room()
+        record = self.app_module.db.get_table(room["id"])
+        with self.app_module.db.get_connection() as conn:
+            conn.execute("UPDATE tables SET max_players = 2 WHERE id = ?", (room["id"],))
+            conn.commit()
+        self.app_module.tables.pop(room["id"], None)
+        host_socket = self.app_module.socketio.test_client(
+            self.app_module.app, flask_test_client=host_client
+        )
+        host_socket.emit("room:join", {"join_code": room["join_code"]})
+        host_socket.get_received()
+        host_socket.emit("bot:add", {"level": "beginner", "persona": "caller"})
+        snapshot = self.events_named(host_socket, "room:snapshot")[-1]
+        bot_id = next(player["id"] for player in snapshot["table"]["players"] if player["is_bot"])
+
+        host_socket.emit("bot:add", {"level": "beginner", "persona": "tight"})
+        self.assertEqual(self.events_named(host_socket, "error")[-1]["code"], "room_full")
+
+        host_socket.emit("hand:start", {})
+        host_socket.get_received()
+        host_socket.emit("bot:remove", {"player_id": bot_id})
+        self.assertEqual(self.events_named(host_socket, "error")[-1]["code"], "hand_in_progress")
+
     def test_socket_cannot_act_without_room_membership(self):
         _, _, room = self.create_room()
         outsider_client, _ = self.guest_client("Outsider")
