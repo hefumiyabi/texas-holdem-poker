@@ -213,8 +213,7 @@ def _process_bot_actions_locked(table_id: str):
         
         result = table.process_bot_actions()
         
-        # 调试：打印机器人处理结果
-        print(f"🤖 机器人处理结果: {result}")
+        print(f"🤖 机器人处理完成: hand_complete={bool(result and result.get('hand_complete'))}")
         print(f"🤖 游戏阶段: {table.game_stage.value}")
         
         # 检查是否手牌结束
@@ -222,7 +221,7 @@ def _process_bot_actions_locked(table_id: str):
             print(f"🏆 机器人处理导致手牌结束")
             showdown_info = result.get('showdown_info', {})
             winner = result.get('winner')
-            print(f"🏆 准备调用handle_hand_end，winner: {winner}, showdown_info: {showdown_info}")
+            print(f"🏆 准备结算房间 {table_id}")
             handle_hand_end(table_id, winner, showdown_info)
             return result
         else:
@@ -1464,6 +1463,8 @@ def _v1_snapshot(record: Dict, table: Table, viewer_id: str) -> Dict:
         'room': _room_details(record, viewer_id),
         'table': table.get_table_state(viewer_id),
     }
+    if table.last_hand_result:
+        payload['last_hand_result'] = table.last_hand_result
     if record.get('room_mode') != 'bot_challenge':
         return payload
     if table.game_stage not in (GameStage.PRE_FLOP, GameStage.FLOP, GameStage.TURN, GameStage.RIVER):
@@ -2536,8 +2537,7 @@ def handle_player_action(data):
                     player.chips  # chips_after
                 )
         
-        # 调试：打印result的完整内容
-        print(f"🔍 玩家动作处理结果: {result}")
+        print(f"🔍 玩家动作处理完成: success={bool(result.get('success'))}, hand_complete={bool(result.get('hand_complete'))}")
         
         if result.get('success'):
             # 发送动作处理结果
@@ -2563,7 +2563,7 @@ def handle_player_action(data):
                 try:
                     print(f"👤 {result.get('description', '')} 完成，开始处理机器人动作...")
                     bot_result = process_bot_actions(table_id)  # 使用修改后的函数
-                    print(f"🔍 机器人处理结果: {bot_result}")
+                    print(f"🔍 机器人处理完成: hand_complete={bool(bot_result and bot_result.get('hand_complete'))}")
                     
                     # 注意：process_bot_actions 已经会发送状态更新、行动通知，
                     # 并在手牌结束时调用 handle_hand_end，这里不能再调用一次（否则结算消息重复）
@@ -3008,9 +3008,7 @@ def handle_hand_end(table_id, winner, showdown_info):
         
         table = tables[table_id]
         
-        # 调试：打印传入的信息
-        print(f"🏆 handle_hand_end 收到获胜者: {winner}")
-        print(f"🏆 摊牌信息: {showdown_info}")
+        print(f"🏆 结算房间 {table_id}: showdown={bool(showdown_info.get('is_showdown'))}")
         
         # 确保 winner 是玩家对象，而不是字典
         winner_player = None

@@ -77,6 +77,7 @@ class Table:
         self.last_activity = time.time()
         self.on_bot_action = None  # 机器人完成一次行动后的回调钩子（由app层设置，用于逐步广播）
         self._advice_cache: Dict = {}
+        self.last_hand_result: Optional[Dict] = None
     
     def add_player(self, player: Player) -> bool:
         """添加玩家到牌桌"""
@@ -142,6 +143,7 @@ class Table:
             return False
 
         self._advice_cache.clear()
+        self.last_hand_result = None
 
         # 庄家按座位顺序轮换到下一位有筹码的玩家（第一手牌为第一位）
         if self.dealer_id is None or self.hand_number == 0:
@@ -1027,6 +1029,7 @@ class Table:
         if not contenders:
             print("⚠️ 结算时没有在局玩家，底池保留")
             self.game_stage = GameStage.FINISHED
+            self.last_hand_result = self._sanitize_hand_result(showdown_info)
             return showdown_info
 
         winnings: Dict[str, int] = {p.id: 0 for p in contenders}
@@ -1131,7 +1134,44 @@ class Table:
                 print(f"💸 {p.nickname} 筹码输光，转为观战")
 
         self.game_stage = GameStage.FINISHED
+        self.last_hand_result = self._sanitize_hand_result(showdown_info)
         return showdown_info
+
+    @staticmethod
+    def _sanitize_hand_result(showdown_info: Dict) -> Dict:
+        """Convert engine result objects to a JSON-safe, privacy-preserving result."""
+        is_showdown = bool(showdown_info.get('is_showdown'))
+        winners = [{
+            'player_id': winner.get('player_id'),
+            'nickname': winner.get('nickname'),
+            'amount': winner.get('amount', 0),
+            'chips': winner.get('chips', 0),
+        } for winner in showdown_info.get('winners', [])]
+        players = []
+        if is_showdown:
+            for player in showdown_info.get('showdown_players', []):
+                players.append({
+                    'player_id': player.get('player_id'),
+                    'nickname': player.get('nickname'),
+                    'is_bot': bool(player.get('is_bot')),
+                    'hole_cards': list(player.get('hole_cards', [])),
+                    'hand_description': player.get('hand_description', ''),
+                    'hand_name': player.get('hand_name', ''),
+                    'rank': player.get('rank', 0),
+                    'result': player.get('result', ''),
+                    'winnings': player.get('winnings', 0),
+                    'returned': player.get('returned', 0),
+                    'final_chips': player.get('final_chips', 0),
+                })
+        return {
+            'is_showdown': is_showdown,
+            'win_reason': showdown_info.get('win_reason', ''),
+            'pot': showdown_info.get('pot', 0),
+            'community_cards': list(showdown_info.get('community_cards', [])),
+            'winners': winners,
+            'showdown_players': players,
+            'pots': list(showdown_info.get('pots', [])),
+        }
 
     def process_game_flow(self) -> Dict:
         """处理游戏流程，返回状态更新"""

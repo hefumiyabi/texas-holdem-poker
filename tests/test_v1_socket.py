@@ -203,6 +203,20 @@ class V1SocketTestCase(unittest.TestCase):
         self.assertIn("table", snapshot)
         self.assertNotIn("analysis", snapshot)
 
+    def test_finished_snapshot_restores_sanitized_hand_result(self):
+        _client, hero, room = self.create_challenge()
+        record = self.app_module.db.get_table(room["id"])
+        table = self.app_module.tables[room["id"]]
+        table.last_hand_result = {
+            "is_showdown": True, "win_reason": "best_hand", "winners": [],
+            "showdown_players": [], "community_cards": [], "pots": [],
+        }
+        table.game_stage = self.app_module.GameStage.FINISHED
+
+        snapshot = self.app_module._v1_snapshot(record, table, hero["id"])
+
+        self.assertEqual(snapshot["last_hand_result"]["win_reason"], "best_hand")
+
     def test_concurrent_round_votes_start_exactly_one_hand(self):
         host_client, _, room = self.create_room()
         first = self.app_module.socketio.test_client(self.app_module.app, flask_test_client=host_client)
