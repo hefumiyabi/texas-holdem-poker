@@ -109,12 +109,29 @@ current_hands: Dict[str, int] = {}    # table_id -> hand_id (当前手牌ID)
 next_round_votes = {}  # {table_id: {player_id: True/False}}
 
 _bot_processing_locks: Dict[str, threading.Lock] = {}
+_table_state_locks: Dict[str, threading.RLock] = {}
 
 SESSION_COOKIE_NAME = 'poker_session'
 SESSION_TTL_SECONDS = 30 * 24 * 60 * 60
 JOIN_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
 _rate_limit_buckets = defaultdict(deque)
 _rate_limit_lock = threading.Lock()
+
+
+def _get_table_state_lock(table_id: str) -> threading.RLock:
+    """Serialize lineup changes and hand starts for one table."""
+    return _table_state_locks.setdefault(table_id, threading.RLock())
+
+
+def _lineup_is_editable(table: Table) -> bool:
+    return table.game_stage in (GameStage.WAITING, GameStage.FINISHED)
+
+
+def _with_table_state_lock(function):
+    def locked(table_id, *args, **kwargs):
+        with _get_table_state_lock(table_id):
+            return function(table_id, *args, **kwargs)
+    return locked
 
 
 def process_bot_actions(table_id: str):
@@ -528,7 +545,9 @@ def _table_from_record(record: Dict) -> Table:
                 level, persona = BotLevel.BEGINNER, BotPersona.BALANCED
             player = Bot(row['player_id'], user['nickname'], row['chips'], level, persona)
         else:
-            player = players.get(row['player_id']) or Player(row['player_id'], user['nickname'], row['chips'])
+            # Player state belongs to this table. Reusing a cached Player from a
+            # previous room leaks the old room's stack into a newly selected buy-in.
+            player = Player(row['player_id'], user['nickname'], row['chips'])
         players[player.id] = player
         table.add_player_at_position(player, row['position'])
     return table
@@ -1254,7 +1273,7 @@ def handle_connect():
 
 
 @socketio.on('disconnect')
-def handle_disconnect():
+def handle_disconnect(_reason=None):
     """处理玩家断线"""
     try:
         session_id = request.sid
@@ -1512,33 +1531,38 @@ def handle_v1_bot_add(data):
     context = _v1_room_context(require_host=True)
     if not context:
         return
-    _session, record, table = context
-    if table.game_stage != GameStage.WAITING:
-        _v1_error('hand_in_progress', '牌局进行中不能调整机器人')
-        return
-    if len(table.players) >= table.max_players:
-        _v1_error('room_full', '房间已满')
-        return
-    try:
-        level, persona = _parse_public_bot(
-            str((data or {}).get('level', 'beginner')),
-            str((data or {}).get('persona', 'balanced')),
-        )
-    except ValueError as exc:
-        code = 'invalid_bot_persona' if 'persona' in str(exc) else 'invalid_bot_level'
-        _v1_error(code, '机器人人格无效' if code.endswith('persona') else '机器人等级无效')
-        return
-    suffix = 1 + sum(1 for player in table.players if player.is_bot)
-    spec = _bot_spec(level, persona, suffix)
-    position = next((seat for seat, player in table.seats.items() if player is None), None)
-    if position is None:
-        _v1_error('room_full', '房间已满')
-        return
-    db.add_table_bot(record['id'], spec, table.initial_chips, position)
-    bot = _bot_from_spec(spec, table.initial_chips)
-    table.add_player_at_position(bot, position)
-    players[bot.id] = bot
-    _emit_v1_snapshots(record['id'])
+    record_id = context[1]['id']
+    with _get_table_state_lock(record_id):
+        context = _v1_room_context(require_host=True)
+        if not context:
+            return
+        _session, record, table = context
+        if not _lineup_is_editable(table):
+            _v1_error('hand_in_progress', '牌局进行中不能调整机器人')
+            return
+        if len(table.players) >= table.max_players:
+            _v1_error('room_full', '房间已满')
+            return
+        try:
+            level, persona = _parse_public_bot(
+                str((data or {}).get('level', 'beginner')),
+                str((data or {}).get('persona', 'balanced')),
+            )
+        except ValueError as exc:
+            code = 'invalid_bot_persona' if 'persona' in str(exc) else 'invalid_bot_level'
+            _v1_error(code, '机器人人格无效' if code.endswith('persona') else '机器人等级无效')
+            return
+        suffix = 1 + sum(1 for player in table.players if player.is_bot)
+        spec = _bot_spec(level, persona, suffix)
+        position = next((seat for seat, player in table.seats.items() if player is None), None)
+        if position is None:
+            _v1_error('room_full', '房间已满')
+            return
+        db.add_table_bot(record['id'], spec, table.initial_chips, position)
+        bot = _bot_from_spec(spec, table.initial_chips)
+        table.add_player_at_position(bot, position)
+        players[bot.id] = bot
+        _emit_v1_snapshots(record['id'])
 
 
 def _v1_bot_target(data):
@@ -1546,7 +1570,7 @@ def _v1_bot_target(data):
     if not context:
         return None
     _session, record, table = context
-    if table.game_stage != GameStage.WAITING:
+    if not _lineup_is_editable(table):
         _v1_error('hand_in_progress', '牌局进行中不能调整机器人')
         return None
     player_id = str((data or {}).get('player_id', ''))
@@ -1559,42 +1583,50 @@ def _v1_bot_target(data):
 
 @socketio.on('bot:remove')
 def handle_v1_bot_remove(data):
-    target = _v1_bot_target(data)
-    if not target:
+    context = _v1_room_context(require_host=True)
+    if not context:
         return
-    record, table, player = target
-    if not db.remove_table_bot(record['id'], player.id):
-        _v1_error('bot_not_found', '机器人不存在')
-        return
-    table.remove_player(player.id)
-    players.pop(player.id, None)
-    _emit_v1_snapshots(record['id'])
+    with _get_table_state_lock(context[1]['id']):
+        target = _v1_bot_target(data)
+        if not target:
+            return
+        record, table, player = target
+        if not db.remove_table_bot(record['id'], player.id):
+            _v1_error('bot_not_found', '机器人不存在')
+            return
+        table.remove_player(player.id)
+        players.pop(player.id, None)
+        _emit_v1_snapshots(record['id'])
 
 
 @socketio.on('bot:replace')
 def handle_v1_bot_replace(data):
-    target = _v1_bot_target(data)
-    if not target:
+    context = _v1_room_context(require_host=True)
+    if not context:
         return
-    record, table, player = target
-    try:
-        level, persona = _parse_public_bot(
-            str((data or {}).get('level', 'beginner')),
-            str((data or {}).get('persona', 'balanced')),
-        )
-    except ValueError as exc:
-        code = 'invalid_bot_persona' if 'persona' in str(exc) else 'invalid_bot_level'
-        _v1_error(code, '机器人人格无效' if code.endswith('persona') else '机器人等级无效')
-        return
-    suffix = 1 + sum(1 for candidate in table.players if candidate.is_bot and candidate.id != player.id)
-    spec = _bot_spec(level, persona, suffix)
-    position = db.replace_table_bot(record['id'], player.id, spec, table.initial_chips)
-    table.remove_player(player.id)
-    players.pop(player.id, None)
-    replacement = _bot_from_spec(spec, table.initial_chips)
-    table.add_player_at_position(replacement, position)
-    players[replacement.id] = replacement
-    _emit_v1_snapshots(record['id'])
+    with _get_table_state_lock(context[1]['id']):
+        target = _v1_bot_target(data)
+        if not target:
+            return
+        record, table, player = target
+        try:
+            level, persona = _parse_public_bot(
+                str((data or {}).get('level', 'beginner')),
+                str((data or {}).get('persona', 'balanced')),
+            )
+        except ValueError as exc:
+            code = 'invalid_bot_persona' if 'persona' in str(exc) else 'invalid_bot_level'
+            _v1_error(code, '机器人人格无效' if code.endswith('persona') else '机器人等级无效')
+            return
+        suffix = 1 + sum(1 for candidate in table.players if candidate.is_bot and candidate.id != player.id)
+        spec = _bot_spec(level, persona, suffix)
+        position = db.replace_table_bot(record['id'], player.id, spec, table.initial_chips)
+        table.remove_player(player.id)
+        players.pop(player.id, None)
+        replacement = _bot_from_spec(spec, table.initial_chips)
+        table.add_player_at_position(replacement, position)
+        players[replacement.id] = replacement
+        _emit_v1_snapshots(record['id'])
 
 
 @socketio.on('hand:start')
@@ -1602,18 +1634,22 @@ def handle_v1_hand_start(_data=None):
     context = _v1_room_context(require_host=True)
     if not context:
         return
-    _session, record, table = context
-    if table.game_stage != GameStage.WAITING:
-        _v1_error('hand_in_progress', '牌局已经开始')
-        return
-    if not table.start_new_hand():
-        _v1_error('not_enough_players', '至少需要两名有筹码的玩家')
-        return
-    next_round_votes[record['id']] = set()
-    _emit_v1_snapshots(record['id'], 'hand:started')
-    _emit_v1_snapshots(record['id'], 'turn:changed')
-    if table.get_current_player() and table.get_current_player().is_bot:
-        socketio.start_background_task(process_bot_actions_delayed, record['id'], 0)
+    with _get_table_state_lock(context[1]['id']):
+        context = _v1_room_context(require_host=True)
+        if not context:
+            return
+        _session, record, table = context
+        if table.game_stage != GameStage.WAITING:
+            _v1_error('hand_in_progress', '牌局已经开始')
+            return
+        if not table.start_new_hand():
+            _v1_error('not_enough_players', '至少需要两名有筹码的玩家')
+            return
+        next_round_votes[record['id']] = set()
+        _emit_v1_snapshots(record['id'], 'hand:started')
+        _emit_v1_snapshots(record['id'], 'turn:changed')
+        if table.get_current_player() and table.get_current_player().is_bot:
+            socketio.start_background_task(process_bot_actions_delayed, record['id'], 0)
 
 
 @socketio.on('player:act')
@@ -1665,21 +1701,34 @@ def handle_v1_round_vote(_data=None):
     context = _v1_room_context()
     if not context:
         return
-    session, record, table = context
-    if table.game_stage != GameStage.FINISHED:
-        _v1_error('vote_unavailable', '只能在本局结束后投票')
-        return
-    votes = next_round_votes.setdefault(record['id'], set())
-    votes.add(session['player_id'])
-    human_ids = {player.id for player in table.players if not player.is_bot and player.chips > 0}
-    socketio.emit('round:vote', {
-        'votes': len(votes & human_ids),
-        'required': len(human_ids),
-    }, room=record['id'])
-    if human_ids and human_ids.issubset(votes):
-        next_round_votes[record['id']] = set()
-        start_next_round(record['id'])
-        _emit_v1_snapshots(record['id'], 'hand:started')
+    record_id = context[1]['id']
+    with _get_table_state_lock(record_id):
+        context = _v1_room_context()
+        if not context:
+            return
+        session, record, table = context
+        if table.game_stage != GameStage.FINISHED:
+            _v1_error('vote_unavailable', '只能在本局结束后投票')
+            return
+        eligible = [
+            player for player in table.players
+            if player.status != PlayerStatus.DISCONNECTED and player.chips > 0
+        ]
+        if len(eligible) < 2:
+            _v1_error('not_enough_players', '至少需要两名有筹码的玩家')
+            return
+        votes = next_round_votes.setdefault(record_id, set())
+        votes.add(session['player_id'])
+        human_ids = {player.id for player in eligible if not player.is_bot}
+        socketio.emit('round:vote', {
+            'votes': len(votes & human_ids),
+            'required': len(human_ids),
+        }, room=record_id)
+        if human_ids and human_ids.issubset(votes):
+            if not start_next_round(record_id):
+                _v1_error('next_hand_failed', '下一局启动失败')
+                return
+            _emit_v1_snapshots(record_id, 'hand:started')
 
 
 @socketio.on('register_player')
@@ -1780,6 +1829,16 @@ def handle_create_table(data):
         max_players = int(data.get('max_players', 9))
         initial_chips = int(data.get('initial_chips', 1000))
         bots_config = data.get('bots', {})
+
+        if not isinstance(bots_config, dict) or any(
+            level not in {'beginner', 'intermediate', 'advanced'}
+            or isinstance(count, bool)
+            or not isinstance(count, int)
+            or count < 0
+            for level, count in bots_config.items()
+        ):
+            emit('error', {'message': '机器人等级无效'})
+            return
         
         # 验证参数
         if not title or len(title) > 50:
@@ -2248,7 +2307,11 @@ def handle_add_bot(data):
         try:
             level_enum = BotLevel[level_str.upper()]
         except KeyError:
-            level_enum = BotLevel.BEGINNER
+            emit('error', {'message': '机器人等级无效'})
+            return
+        if not level_enum.is_public:
+            emit('error', {'message': '机器人等级无效'})
+            return
         
         # 生成机器人名称
         bot_names = {
@@ -2834,6 +2897,7 @@ def handle_vote_next_round(data):
         print(f"下一轮投票错误: {e}")
         emit('error', {'message': '投票失败'})
 
+@_with_table_state_lock
 def start_next_round(table_id):
     """开始下一轮游戏"""
     try:
@@ -2841,18 +2905,14 @@ def start_next_round(table_id):
             return
         
         table = tables[table_id]
-        
-        # 清理投票记录
-        if table_id in next_round_votes:
-            del next_round_votes[table_id]
-        
-        # 重置所有玩家状态
-        for player in table.players:
-            player.status = 'playing'
-            player.current_bet = 0
-            player.total_bet = 0
-            player.has_acted = False
-            player.hole_cards = []
+        if table.game_stage != GameStage.FINISHED:
+            return False
+        eligible = [
+            player for player in table.players
+            if player.status != PlayerStatus.DISCONNECTED and player.chips > 0
+        ]
+        if len(eligible) < 2:
+            return False
         
         # 开始新手牌
         success = table.start_new_hand()
@@ -2860,7 +2920,9 @@ def start_next_round(table_id):
         
         if not success:
             print(f"❌ 新手牌开始失败")
-            return
+            return False
+
+        next_round_votes.pop(table_id, None)
         
         print(f"🎮 房间 {table.title} 开始下一轮")
         
@@ -2885,9 +2947,11 @@ def start_next_round(table_id):
         
         # 开始机器人处理
         socketio.start_background_task(process_bot_actions_delayed, table_id)
+        return True
         
     except Exception as e:
         print(f"开始下一轮错误: {e}")
+        return False
 
 def process_bot_actions_delayed(table_id, delay=1):
     """延迟处理机器人动作"""

@@ -23,5 +23,8 @@ describe('ActionRail', () => {
     expect(dialog.getByRole('button', { name: '¾池' })).toBeInTheDocument()
     expect(dialog.getByRole('button', { name: '满池' })).toBeInTheDocument()
     expect(dialog.getByRole('button', { name: '全下' })).toBeInTheDocument()
+    const confirm = dialog.getByRole('button', { name: /确认\s*80/ })
+    expect(confirm).toHaveClass('bet-confirm-button')
+    expect(confirm.querySelector('.confirm-amount')).toHaveTextContent('80')
   })
 })

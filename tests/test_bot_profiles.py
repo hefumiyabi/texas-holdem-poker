@@ -5,6 +5,7 @@ import pytest
 from poker_engine.bot import Bot, BotLevel
 from poker_engine.card import Card, Rank, Suit
 from poker_engine.player import PlayerAction, PlayerStatus
+from poker_engine.player import Player
 from poker_engine.bot_profiles import BotPersona, get_bot_profile
 from poker_engine.table import Table
 
@@ -91,6 +92,43 @@ def test_bot_action_logs_never_print_hidden_cards(monkeypatch, capsys):
     table.process_bot_actions()
 
     assert "手牌:" not in capsys.readouterr().out
+
+
+def test_public_bot_state_cannot_access_opponent_hole_cards():
+    table = Table("fair", "Fair", 10, 20, 2, 1000)
+    human = Player("human", "Human", 1000)
+    human.status = PlayerStatus.PLAYING
+    human.hole_cards = [Card(Suit.SPADES, Rank.ACE), Card(Suit.HEARTS, Rank.ACE)]
+    bot = make_bot(BotPersona.BALANCED, level=BotLevel.ADVANCED)
+    table.add_player(human)
+    table.add_player(bot)
+
+    opponents = table._bot_game_state(bot)["all_players"]
+
+    public_human = next(player for player in opponents if player.id == human.id)
+    assert not hasattr(public_human, "hole_cards")
+
+
+def test_seeded_postflop_strategy_is_reproducible():
+    state = {
+        "community_cards": [
+            Card(Suit.SPADES, Rank.KING), Card(Suit.HEARTS, Rank.NINE),
+            Card(Suit.CLUBS, Rank.TWO),
+        ],
+        "current_bet": 0, "to_call": 0, "pot_size": 300,
+        "big_blind": 20, "min_bet": 20, "min_raise_to": 40,
+        "active_players": 2, "num_opponents": 1, "position": "late",
+        "all_players": [],
+    }
+    actions = []
+    for _ in range(3):
+        bot = Bot("bot", "Seeded", 1000, BotLevel.ADVANCED,
+                  persona=BotPersona.BALANCED, rng=random.Random(7))
+        bot.status = PlayerStatus.PLAYING
+        bot.hole_cards = [Card(Suit.HEARTS, Rank.QUEEN), Card(Suit.DIAMONDS, Rank.NINE)]
+        actions.append(bot.decide_action(state))
+
+    assert actions[0] == actions[1] == actions[2]
 
 
 @pytest.mark.parametrize(

@@ -1,6 +1,7 @@
 import importlib
 import os
 import tempfile
+import threading
 import unittest
 
 
@@ -22,6 +23,7 @@ class V1SocketTestCase(unittest.TestCase):
         self.app_module.session_tables.clear()
         self.app_module.v1_socket_sessions.clear()
         self.app_module.next_round_votes.clear()
+        self.app_module._table_state_locks.clear()
         self.app_module.app.config.update(TESTING=True, SECRET_KEY="test-secret")
         if hasattr(self.app_module, "_rate_limit_buckets"):
             self.app_module._rate_limit_buckets.clear()
@@ -69,6 +71,18 @@ class V1SocketTestCase(unittest.TestCase):
         legacy_socket.emit("join_table", {"table_id": room["id"]})
         errors = self.events_named(legacy_socket, "error")
         self.assertEqual(errors[-1]["message"], "房间不存在")
+
+    def test_legacy_public_socket_rejects_god_bots(self):
+        client = self.app_module.app.test_client()
+        socket_client = self.app_module.socketio.test_client(self.app_module.app, flask_test_client=client)
+        socket_client.emit("register_player", {"nickname": "Legacy Host"})
+        socket_client.get_received()
+
+        socket_client.emit("create_table", {"title": "No God", "bots": {"god": 1}})
+
+        errors = self.events_named(socket_client, "error")
+        self.assertEqual(errors[-1]["message"], "机器人等级无效")
+        self.assertFalse(any(table.title == "No God" for table in self.app_module.tables.values()))
 
     def test_authenticated_join_ignores_forged_player_id_and_emits_private_snapshot(self):
         host_client, host, room = self.create_room()
@@ -136,6 +150,50 @@ class V1SocketTestCase(unittest.TestCase):
 
         self.assertEqual(errors[-1]["code"], "vote_unavailable")
 
+    def test_concurrent_round_votes_start_exactly_one_hand(self):
+        host_client, _, room = self.create_room()
+        first = self.app_module.socketio.test_client(self.app_module.app, flask_test_client=host_client)
+        second = self.app_module.socketio.test_client(self.app_module.app, flask_test_client=host_client)
+        for socket_client in (first, second):
+            socket_client.emit("room:join", {"join_code": room["join_code"]})
+            socket_client.get_received()
+        first.emit("bot:add", {"level": "beginner", "persona": "balanced"})
+        first.get_received()
+        table = self.app_module.tables[room["id"]]
+        table.game_stage = self.app_module.GameStage.FINISHED
+        table.hand_number = 1
+
+        barrier = threading.Barrier(3)
+        threads = [threading.Thread(target=lambda client=client: (barrier.wait(), client.emit("round:vote", {}))) for client in (first, second)]
+        for thread in threads:
+            thread.start()
+        barrier.wait()
+        for thread in threads:
+            thread.join(3)
+
+        self.assertEqual(table.hand_number, 2)
+        self.assertEqual(table.game_stage, self.app_module.GameStage.PRE_FLOP)
+
+    def test_round_vote_with_one_player_preserves_finished_state(self):
+        host_client, _, room = self.create_room()
+        socket_client = self.app_module.socketio.test_client(
+            self.app_module.app, flask_test_client=host_client
+        )
+        socket_client.emit("room:join", {"join_code": room["join_code"]})
+        socket_client.get_received()
+        table = self.app_module.tables[room["id"]]
+        table.game_stage = self.app_module.GameStage.FINISHED
+        table.hand_number = 1
+        original_status = table.players[0].status
+
+        socket_client.emit("round:vote", {})
+
+        errors = self.events_named(socket_client, "error")
+        self.assertEqual(errors[-1]["code"], "not_enough_players")
+        self.assertEqual(table.hand_number, 1)
+        self.assertEqual(table.game_stage, self.app_module.GameStage.FINISHED)
+        self.assertEqual(table.players[0].status, original_status)
+
     def test_bot_first_action_pushes_a_fresh_v1_snapshot(self):
         host_client, host, room = self.create_room()
         host_socket = self.app_module.socketio.test_client(
@@ -198,6 +256,66 @@ class V1SocketTestCase(unittest.TestCase):
         host_socket.emit("bot:remove", {"player_id": replacement["id"]})
         removed = self.events_named(host_socket, "room:snapshot")[-1]
         self.assertEqual(len(removed["table"]["players"]), 1)
+
+    def test_host_can_adjust_bots_after_a_completed_hand(self):
+        host_client, _, room = self.create_room()
+        host_socket = self.app_module.socketio.test_client(
+            self.app_module.app, flask_test_client=host_client
+        )
+        host_socket.emit("room:join", {"join_code": room["join_code"]})
+        host_socket.get_received()
+        host_socket.emit("bot:add", {"level": "intermediate", "persona": "tight"})
+        snapshot = self.events_named(host_socket, "room:snapshot")[-1]
+        bot_id = next(player["id"] for player in snapshot["table"]["players"] if player["is_bot"])
+        self.app_module.tables[room["id"]].game_stage = self.app_module.GameStage.FINISHED
+
+        host_socket.emit("bot:remove", {"player_id": bot_id})
+
+        snapshots = self.events_named(host_socket, "room:snapshot")
+        self.assertEqual(len(snapshots[-1]["table"]["players"]), 1)
+
+    def test_bot_add_and_hand_start_share_one_table_lock(self):
+        host_client, _, room = self.create_room()
+        second_client, _ = self.guest_client("Second")
+        second_client.post(f"/api/v1/rooms/{room['join_code']}/join", json={"position": 1})
+        add_socket = self.app_module.socketio.test_client(
+            self.app_module.app, flask_test_client=host_client
+        )
+        start_socket = self.app_module.socketio.test_client(
+            self.app_module.app, flask_test_client=host_client
+        )
+        for client in (add_socket, start_socket):
+            client.emit("room:join", {"join_code": room["join_code"]})
+            client.get_received()
+
+        entered = threading.Event()
+        release = threading.Event()
+        original_add = self.app_module.db.add_table_bot
+
+        def blocked_add(*args, **kwargs):
+            entered.set()
+            release.wait(2)
+            return original_add(*args, **kwargs)
+
+        self.app_module.db.add_table_bot = blocked_add
+        add_thread = threading.Thread(target=lambda: add_socket.emit(
+            "bot:add", {"level": "intermediate", "persona": "balanced"}
+        ))
+        start_thread = threading.Thread(target=lambda: start_socket.emit("hand:start", {}))
+        try:
+            add_thread.start()
+            self.assertTrue(entered.wait(1))
+            start_thread.start()
+            release.set()
+            add_thread.join(3)
+            start_thread.join(3)
+        finally:
+            self.app_module.db.add_table_bot = original_add
+            release.set()
+
+        table = self.app_module.tables[room["id"]]
+        self.assertEqual(table.game_stage, self.app_module.GameStage.PRE_FLOP)
+        self.assertEqual(len(table.players), len(table.hand_players))
 
     def test_bot_changes_reject_full_room_and_active_hand(self):
         host_client, _, room = self.create_room()

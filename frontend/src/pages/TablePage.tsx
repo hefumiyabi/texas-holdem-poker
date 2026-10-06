@@ -1,5 +1,5 @@
 import { Plus, Spade } from '@phosphor-icons/react'
-import { useEffect, useMemo, useReducer, useState } from 'react'
+import { useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import type { Socket } from 'socket.io-client'
 import { ActionRail } from '../components/ActionRail'
@@ -16,14 +16,27 @@ import { createPokerSocket } from '../socket'
 import { initialTableState, tableReducer } from '../state/tableReducer'
 import type { BotPersona, RoomSnapshot } from '../types'
 
-const seatPositions = [
-  { left: '50%', top: '83%' }, { left: '12%', top: '64%' }, { left: '15%', top: '25%' },
-  { left: '50%', top: '9%' }, { left: '85%', top: '25%' }, { left: '88%', top: '64%' },
-]
+export function getSeatPositions(maxPlayers: number) {
+  if (maxPlayers <= 2) return [{ left: '50%', top: '83%' }, { left: '50%', top: '9%' }]
+  if (maxPlayers <= 4) return [
+    { left: '50%', top: '83%' }, { left: '11%', top: '48%' },
+    { left: '50%', top: '9%' }, { left: '89%', top: '48%' },
+  ]
+  if (maxPlayers <= 6) return [
+    { left: '50%', top: '83%' }, { left: '12%', top: '64%' }, { left: '15%', top: '25%' },
+    { left: '50%', top: '9%' }, { left: '85%', top: '25%' }, { left: '88%', top: '64%' },
+  ]
+  return [
+    { left: '50%', top: '84%' }, { left: '25%', top: '78%' }, { left: '8%', top: '60%' },
+    { left: '8%', top: '31%' }, { left: '29%', top: '10%' }, { left: '71%', top: '10%' },
+    { left: '92%', top: '31%' }, { left: '92%', top: '60%' }, { left: '75%', top: '78%' },
+  ].slice(0, maxPlayers)
+}
 
 export function TablePage({ preferences, onPreferences }: { preferences: Preferences; onPreferences: (preferences: Preferences) => void }) {
   const language = preferences.language; const { code = '' } = useParams(); const navigate = useNavigate()
   const [state, dispatch] = useReducer(tableReducer, initialTableState); const [settings, setSettings] = useState(false); const [lineup, setLineup] = useState(false); const [betSizing, setBetSizing] = useState(false); const [copied, setCopied] = useState(false); const [socket, setSocket] = useState<Socket | null>(null)
+  const actionTimer = useRef<number | null>(null)
   useEffect(() => {
     const connection = createPokerSocket(); setSocket(connection)
     const snapshot = (payload: RoomSnapshot) => dispatch({ type: 'snapshot', snapshot: payload })
@@ -31,11 +44,15 @@ export function TablePage({ preferences, onPreferences }: { preferences: Prefere
     connection.on('disconnect', () => dispatch({ type: 'connection', status: 'reconnecting' }))
     connection.io.on('reconnect_attempt', () => dispatch({ type: 'connection', status: 'reconnecting' }))
     for (const event of ['room:snapshot', 'hand:started', 'turn:changed', 'hand:completed']) connection.on(event, snapshot)
-    connection.on('action:resolved', (payload: { description?: string }) => dispatch({ type: 'action', description: payload.description || '' }))
+    connection.on('action:resolved', (payload: { description?: string }) => {
+      if (actionTimer.current !== null) window.clearTimeout(actionTimer.current)
+      dispatch({ type: 'action', description: payload.description || '' })
+      actionTimer.current = window.setTimeout(() => dispatch({ type: 'clear-action' }), 1200)
+    })
     connection.on('error', (payload: { message?: string }) => dispatch({ type: 'error', message: payload.message || 'Error' }))
     connection.on('room:left', () => navigate('/')); connection.on('room:dissolved', () => navigate('/'))
     connection.connect()
-    return () => { connection.removeAllListeners(); connection.disconnect() }
+    return () => { if (actionTimer.current !== null) window.clearTimeout(actionTimer.current); connection.removeAllListeners(); connection.disconnect() }
   }, [code, navigate])
   const snapshot = state.snapshot; const table = snapshot?.table; const viewer = snapshot ? table?.players.find((player) => player.id === snapshot.viewer_id) : undefined
   const ordered = useMemo(() => {
@@ -50,6 +67,8 @@ export function TablePage({ preferences, onPreferences }: { preferences: Prefere
   const leave = () => { socket?.emit('room:leave'); navigate('/') }
   const level = snapshot.room.difficulty || 'intermediate'
   const maxPlayers = table.max_players || snapshot.room.max_players || Math.max(2, table.players.length)
+  const seatPositions = getSeatPositions(maxPlayers)
+  const betweenHands = table.game_stage === 'waiting' || table.game_stage === 'finished'
   const addBot = (persona: BotPersona) => socket?.emit('bot:add', { level, persona })
   const removeBot = (playerId: string) => socket?.emit('bot:remove', { player_id: playerId })
   const replaceBot = (playerId: string, persona: BotPersona) => socket?.emit('bot:replace', { player_id: playerId, level, persona })
@@ -61,7 +80,7 @@ export function TablePage({ preferences, onPreferences }: { preferences: Prefere
       <PokerBoard language={language} table={table} />
       <div className="seats-layer">
         {ordered.map((player, index) => <PlayerSeat key={player.id} language={language} player={player} self={player.id === snapshot.viewer_id} active={player.id === table.current_player_id} style={seatPositions[index]}/>) }
-        {table.game_stage === 'waiting' && snapshot.room.is_host && Array.from({ length: Math.max(0, maxPlayers - ordered.length) }, (_, index) => <button key={`empty-${index}`} className="empty-table-seat" style={seatPositions[ordered.length + index]} onClick={() => setLineup(true)} aria-label={translate(language, 'emptySeat')}><Plus /></button>)}
+        {betweenHands && snapshot.room.is_host && Array.from({ length: Math.max(0, maxPlayers - ordered.length) }, (_, index) => <button key={`empty-${index}`} className="empty-table-seat" style={seatPositions[ordered.length + index]} onClick={() => setLineup(true)} aria-label={translate(language, 'emptySeat')}><Plus /></button>)}
       </div>
       <div className="hero-hand" aria-label="Your hand"><div>{viewer.hole_cards?.length ? viewer.hole_cards.map((card, index) => <PlayingCard key={index} card={card}/>) : <><PlayingCard hidden/><PlayingCard hidden/></>}</div></div>
       {state.lastAction && <div className="action-toast">{state.lastAction}</div>}
@@ -74,7 +93,7 @@ export function TablePage({ preferences, onPreferences }: { preferences: Prefere
       ? <div className="host-controls"><button className="gold-button" onClick={() => socket?.emit('round:vote')}><Spade/>{translate(language, 'nextHand')}</button></div>
       : <ActionRail language={language} table={table} player={viewer} enabled={isTurn} onAct={act} onSizingChange={setBetSizing}/>
     }
-    {lineup && <LineupDrawer language={language} players={table.players} maxPlayers={maxPlayers} difficulty={level} host={Boolean(snapshot.room.is_host)} waiting={table.game_stage === 'waiting'} onClose={() => setLineup(false)} onAdd={addBot} onRemove={removeBot} onReplace={replaceBot} onShare={share} />}
+    {lineup && <LineupDrawer language={language} players={table.players} maxPlayers={maxPlayers} difficulty={level} host={Boolean(snapshot.room.is_host)} waiting={betweenHands} onClose={() => setLineup(false)} onAdd={addBot} onRemove={removeBot} onReplace={replaceBot} onShare={share} />}
     {settings && <SettingsDrawer preferences={preferences} onChange={onPreferences} onClose={() => setSettings(false)}/>} 
   </main>
 }

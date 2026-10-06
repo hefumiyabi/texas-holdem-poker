@@ -6,9 +6,9 @@ Visual reference: `/Users/guangkaichen/.codex/generated_images/01a105cb-5b26-7e0
 
 ## Automated verification
 
-- `npm test`: 14 files, 22 tests passed.
+- `npm test`: 15 files, 27 tests passed.
 - `npm run build`: TypeScript and Vite production build passed.
-- `.venv/bin/python -m pytest -q`: 41 tests passed.
+- `.venv/bin/python -m pytest -q`: 48 tests passed.
 - Browser console: no warnings or errors during the complete flow.
 
 ## Browser acceptance
@@ -16,17 +16,20 @@ Visual reference: `/Users/guangkaichen/.codex/generated_images/01a105cb-5b26-7e0
 Completed in the Codex in-app browser against `http://127.0.0.1:8899`:
 
 1. Entered a nickname and opened the bot challenge setup.
-2. Created the default six-player intermediate table with five distinct personas.
-3. Verified all five optimized WebP portraits loaded and matched their persona labels.
-4. Started a hand and observed the active bot timer and “思考中” state.
-5. Reached the human turn, opened raise sizing, and verified `½池 / ¾池 / 满池 / 全下`.
-6. Verified hole cards and community cards remain visible while raise sizing is open.
-7. Completed the hand through the river and reached “准备下一局”.
-8. Exercised the friend-invite action and reduced-motion preference.
+2. Selected the 5,000 buy-in and created a six-player intermediate table with five distinct personas.
+3. Verified the hero and all five bots each entered with exactly 5,000 chips, including with a cached older guest session.
+4. Verified all five optimized WebP portraits loaded and matched their persona labels.
+5. Started a hand and observed the active bot timer and “思考中” state.
+6. Reached the human turn, opened raise sizing, and verified `½池 / ¾池 / 满池 / 全下`.
+7. Verified hole cards and community cards remain visible while raise sizing is open.
+8. Completed the hand through the river and reached “准备下一局”.
+9. Exercised the friend-invite action and reduced-motion preference.
+10. Verified the raise confirmation uses a high-contrast gold button with a distinct bold amount (`确认 64`).
+11. Verified a `跟注 $10` action toast appears immediately, disappears after 1.2 seconds, and leaves the hero cards unobstructed.
 
 ## Responsive evidence
 
-- `390×844`: `scrollWidth = 390`, `scrollHeight = 844`; no document scrolling, cards and actions remain visible.
+- `390×844`: `scrollWidth = 390`, `scrollHeight = 844`; no document scrolling. The hero cards end at `y=694` and the action rail begins at `y=740`, leaving a measured 46 px gap during the human turn.
 - `768×1024`: `scrollWidth = 768`, `scrollHeight = 1024`; table bounds remain within the viewport.
 - `1440×900`: `scrollWidth = 1440`, `scrollHeight = 900`; table bounds `340..1100`, action rail `0..1440`.
 
@@ -37,6 +40,16 @@ The implementation retains the selected reference’s warm private-lounge atmosp
 - P1: persona portraits returned 404 because Flask served only `/assets/*`. Added a tested `/avatars/*` production route.
 - P1: the first raise sheet covered the hero cards at `390×844`. Converted it to a compact sizing mode and moved the hero seat/cards above it.
 - P1: production bot logs printed hidden cards. Removed the log and added a privacy regression test.
+- P1: fair public bots could receive opponent objects containing hole cards. Replaced those with public-only player views; only the explicitly non-public GOD test bot retains omniscient state.
+- P1: legacy sockets could still create GOD bots, and bot edits could race with hand start. Restricted legacy levels and serialized lineup/start operations per table.
+- P1: concurrent next-hand votes could start two hands. Moved finished-stage validation, voting, and hand start under the same table lock, with a second stage guard.
+- P1: an older cached guest stack overrode the selected challenge buy-in. Challenge tables now construct table-scoped players from the persisted seat stack.
+- P2: seeded post-flop bots used an unseeded equity sampler. Routed the bot RNG into equity calculations for reproducible decisions.
+- P2: starting a next hand with fewer than two eligible players mutated statuses before failing. It now returns a clear error without changing table state.
+- P2: lineup editing stopped after a completed hand and nine-seat positioning was incomplete. Enabled between-hand edits and added all nine unique seat coordinates.
+- P2: added explicit 1,000 / 5,000 / 10,000 buy-in controls and kept the setup sheet scroll-safe on short phones.
+- P2: the raise confirmation inherited the dark generic sheet-button background. Added a dedicated high-contrast confirmation treatment and bold tabular amount.
+- P2: resolved-action messages persisted over the hero area. Moved them to the top of the stage, made them pointer-transparent, and auto-clear them after 1.2 seconds or immediately on hand completion.
 - P2: the original bottom utility navigation competed with primary actions. Replaced it with top-level lineup, invite, and settings controls.
 - Recheck: all P1/P2 findings fixed; browser console clean; no overflow at target viewports.
 

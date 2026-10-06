@@ -22,7 +22,7 @@ export function ActionRail({ language, table, player, enabled, onAct, onSizingCh
       <div className="bet-heading"><span>{translate(language, actions.includes('raise') ? 'raiseTo' : 'bet')}</span><strong>{amount.toLocaleString()}</strong></div>
       <input aria-label={translate(language, 'raiseTo')} type="range" min={Math.min(min, max)} max={max} step={Math.max(1, table.big_blind || 1)} value={Math.min(amount, max)} onChange={(event) => setAmount(Number(event.target.value))} />
       <div className="preset-row">{presets.map((preset, index) => <button key={preset.label} onClick={() => setAmount(preset.amount)}>{language === 'zh' ? ['½池', '¾池', '满池', '全下'][index] : ['½ pot', '¾ pot', 'Pot', 'All in'][index]}</button>)}</div>
-      <div className="sheet-actions"><button onClick={() => setSizingMode(false)}>{translate(language, 'cancel')}</button><button className="gold-button" onClick={() => { onAct(actions.includes('raise') ? 'raise' : 'bet', amount); setSizingMode(false) }}>{translate(language, 'confirm')} {amount.toLocaleString()}</button></div>
+      <div className="sheet-actions"><button onClick={() => setSizingMode(false)}>{translate(language, 'cancel')}</button><button className="gold-button bet-confirm-button" onClick={() => { onAct(actions.includes('raise') ? 'raise' : 'bet', amount); setSizingMode(false) }}><span>{translate(language, 'confirm')}</span><strong className="confirm-amount">{amount.toLocaleString()}</strong></button></div>
     </div>}
     {!sizing && <div className="action-rail" aria-label="Poker actions">
       <div className="turn-copy"><span className={enabled ? 'pulse-dot' : ''}/><strong>{enabled ? translate(language, 'yourTurn') : translate(language, 'spectating')}</strong></div>

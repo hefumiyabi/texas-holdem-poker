@@ -21,6 +21,7 @@ export const api = {
       mode: 'bot_challenge',
       difficulty: config.difficulty,
       seat_count: config.seatCount,
+      initial_chips: config.initialChips,
       personas: config.personas,
     } : { title: '好友之夜', max_players: 6 }),
   }),

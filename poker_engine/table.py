@@ -6,6 +6,7 @@ Table management for poker game
 import uuid
 import time
 import random
+from dataclasses import dataclass
 from typing import List, Dict, Optional, Tuple
 from enum import Enum
 from .card import Card, Deck
@@ -24,6 +25,15 @@ class GameStage(Enum):
     RIVER = "river"
     SHOWDOWN = "showdown"
     FINISHED = "finished"
+
+
+@dataclass(frozen=True)
+class _PublicPlayerState:
+    """Decision metadata safe to expose to fair bots; deliberately has no cards."""
+    id: str
+    status: PlayerStatus
+    chips: int
+    current_bet: int
 
 
 class Table:
@@ -419,6 +429,9 @@ class Table:
     def _bot_game_state(self, player: Player) -> Dict:
         """机器人决策所需的牌局信息"""
         contenders = [p for p in self.players if p.status in (PlayerStatus.PLAYING, PlayerStatus.ALL_IN)]
+        visible_players = self.players if getattr(player, 'bot_level', None) == BotLevel.GOD else [
+            _PublicPlayerState(p.id, p.status, p.chips, p.current_bet) for p in self.players
+        ]
         return {
             'community_cards': self.community_cards,
             'stage': self.game_stage.value,
@@ -433,7 +446,7 @@ class Table:
             'active_players': len(contenders),
             'num_opponents': max(1, len(contenders) - 1),
             'position': self._position_of(player),
-            'all_players': self.players  # 德州扑克之神可以看到所有玩家的底牌
+            'all_players': visible_players,
         }
     
     def process_bot_actions(self):

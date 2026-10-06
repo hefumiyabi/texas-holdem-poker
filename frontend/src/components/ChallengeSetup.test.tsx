@@ -24,17 +24,19 @@ describe('ChallengeSetup', () => {
     expect(screen.getByRole('button', { name: '开始挑战' })).toBeEnabled()
   })
 
-  it('submits the selected difficulty, table size, and automatic persona lineup', async () => {
+  it('submits the selected difficulty, table size, buy-in, and automatic persona lineup', async () => {
     const onStart = vi.fn().mockResolvedValue(undefined)
     render(<ChallengeSetup language="zh" onClose={vi.fn()} onStart={onStart} />)
 
     await userEvent.click(screen.getByRole('button', { name: '高手' }))
     await userEvent.click(screen.getByRole('button', { name: '四人桌' }))
+    await userEvent.click(screen.getByRole('button', { name: '带入 5,000' }))
     await userEvent.click(screen.getByRole('button', { name: '开始挑战' }))
 
     expect(onStart).toHaveBeenCalledWith({
       difficulty: 'advanced',
       seatCount: 4,
+      initialChips: 5000,
       personas: ['aggressive', 'tight', 'caller'],
     })
   })
@@ -66,6 +68,7 @@ describe('ChallengeSetup', () => {
     expect(api.createRoom).toHaveBeenCalledWith({
       difficulty: 'intermediate',
       seatCount: 6,
+      initialChips: 1000,
       personas: ['aggressive', 'tight', 'caller', 'tricky', 'balanced'],
     })
   })

@@ -302,7 +302,7 @@ class Bot(Player):
             strength = preflop_equity(self.hole_cards, 1)
             equity = preflop_equity(self.hole_cards, num_opponents)
         else:
-            equity = equity_vs_random(self.hole_cards, board, num_opponents, 1500)['equity']
+            equity = equity_vs_random(self.hole_cards, board, num_opponents, 1500, rng=self.rng)['equity']
             strength = equity
 
         # 面对下注：下注者的范围比随机手牌强，按其风格折算胜率
@@ -389,7 +389,7 @@ class Bot(Player):
         """蒙特卡洛胜率：完整比较牌型、点数与踢脚，平局按人数分摊"""
         if len(self.hole_cards) != 2:
             return 0.0
-        return equity_vs_random(self.hole_cards, community_cards, num_opponents, simulations)['equity']
+        return equity_vs_random(self.hole_cards, community_cards, num_opponents, simulations, rng=self.rng)['equity']
 
     def _calculate_bet_size(self, pot_size: int, win_prob: float, bet_type: str) -> int:
         """计算下注大小（中级机器人使用）"""

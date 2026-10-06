@@ -12,17 +12,18 @@ export type TableEvent =
   | { type: 'connection'; status: ConnectionState }
   | { type: 'error'; message: string }
   | { type: 'action'; description: string }
+  | { type: 'clear-action' }
   | { type: 'clear-error' }
 
 export const initialTableState: TableState = { snapshot: null, connection: 'connecting', error: null, lastAction: null }
 
 export function tableReducer(state: TableState, event: TableEvent): TableState {
   switch (event.type) {
-    case 'snapshot': return { ...state, snapshot: event.snapshot, connection: 'connected', error: null }
+    case 'snapshot': return { ...state, snapshot: event.snapshot, connection: 'connected', error: null, lastAction: event.snapshot.table.game_stage === 'finished' ? null : state.lastAction }
     case 'connection': return { ...state, connection: event.status }
     case 'error': return { ...state, error: event.message }
     case 'action': return { ...state, lastAction: event.description }
+    case 'clear-action': return { ...state, lastAction: null }
     case 'clear-error': return { ...state, error: null }
   }
 }
-

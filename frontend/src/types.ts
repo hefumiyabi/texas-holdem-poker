@@ -6,6 +6,7 @@ export type BotPersona = 'balanced' | 'aggressive' | 'tight' | 'caller' | 'trick
 export interface ChallengeConfig {
   difficulty: BotDifficulty
   seatCount: 2 | 4 | 6
+  initialChips: 1000 | 5000 | 10000
   personas: BotPersona[]
 }
 

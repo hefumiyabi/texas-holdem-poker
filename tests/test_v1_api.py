@@ -149,7 +149,12 @@ class V1ApiTestCase(unittest.TestCase):
 
     def test_bot_challenge_creates_the_requested_public_lineup(self):
         client = self.app_module.app.test_client()
-        self.create_guest(client, "Hero")
+        guest = self.create_guest(client, "Hero")
+        # A player object can remain cached after leaving an older table.  A new
+        # challenge must still use the selected table buy-in for the hero.
+        self.app_module.players[guest["id"]] = self.app_module.Player(
+            guest["id"], "Hero", 1000
+        )
 
         response = client.post(
             "/api/v1/rooms",
@@ -157,6 +162,7 @@ class V1ApiTestCase(unittest.TestCase):
                 "mode": "bot_challenge",
                 "difficulty": "advanced",
                 "seat_count": 6,
+                "initial_chips": 5000,
                 "personas": ["aggressive", "tight", "caller", "tricky", "balanced"],
             },
         )
@@ -170,7 +176,9 @@ class V1ApiTestCase(unittest.TestCase):
         self.assertEqual([row["bot_persona"] for row in rows[1:]], [
             "aggressive", "tight", "caller", "tricky", "balanced"
         ])
+        self.assertEqual([row["chips"] for row in rows], [5000] * 6)
         table = self.app_module.tables[room["id"]]
+        self.assertEqual(table.players[0].chips, 5000)
         self.assertEqual([player.bot_level.value for player in table.players[1:]], ["advanced"] * 5)
 
     def test_bot_challenge_defaults_and_supported_table_sizes(self):
