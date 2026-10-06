@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { HandResultCard } from './HandResultCard'
 import type { HandResult } from '../types'
@@ -40,5 +40,14 @@ describe('HandResultCard', () => {
     expect(screen.getByText('Hero、Bot 平分底池')).toBeInTheDocument()
     expect(screen.getByText('Hero +160')).toBeInTheDocument()
     expect(screen.getByText('Bot +160')).toBeInTheDocument()
+  })
+
+  it('collapses to a summary and restores showdown details', () => {
+    render(<HandResultCard language="zh" result={showdown} />)
+    fireEvent.click(screen.getByRole('button', { name: '收起结果' }))
+    expect(screen.queryByLabelText('Hero 手牌')).not.toBeInTheDocument()
+    expect(screen.getByText('Hero 获胜')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '查看结果' }))
+    expect(screen.getByLabelText('Hero 手牌')).toHaveTextContent('A♠K♦')
   })
 })

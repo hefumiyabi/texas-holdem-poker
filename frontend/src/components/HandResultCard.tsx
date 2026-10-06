@@ -1,6 +1,8 @@
+import { useState } from 'react'
 import type { HandResult, Language } from '../types'
 
 export function HandResultCard({ language, result }: { language: Language; result: HandResult }) {
+  const [collapsed, setCollapsed] = useState(false)
   const winner = result.winners[0]
   const winningPlayer = result.showdown_players.find((player) =>
     player.player_id === winner?.player_id || player.nickname === winner?.nickname)
@@ -12,8 +14,12 @@ export function HandResultCard({ language, result }: { language: Language; resul
   const title = split
     ? (language === 'zh' ? `${winnerNames} 平分底池` : `${winnerNames} split the pot`)
     : (language === 'zh' ? `${winner?.nickname || '玩家'} 获胜` : `${winner?.nickname || 'Player'} wins`)
-  return <section className="hand-result-card" role="status">
-    <header><small>{language === 'zh' ? '本手结果' : 'Hand result'}</small><strong>{title}</strong>{!split && <span>+{winner?.amount ?? result.pot}</span>}</header>
+  const toggleLabel = collapsed
+    ? (language === 'zh' ? '查看结果' : 'View result')
+    : (language === 'zh' ? '收起结果' : 'Collapse result')
+  return <section className={`hand-result-card ${collapsed ? 'collapsed' : ''}`} role="status">
+    <header><small>{language === 'zh' ? '本手结果' : 'Hand result'}</small><strong>{title}</strong>{!split && <span>+{winner?.amount ?? result.pot}</span>}<button onClick={() => setCollapsed((value) => !value)} aria-expanded={!collapsed}>{toggleLabel}</button></header>
+    {!collapsed && <div className="result-details">
     {split && <div className="winner-payouts">{result.winners.map((entry) => <span key={entry.player_id || entry.nickname}>{entry.nickname} +{entry.amount}</span>)}</div>}
     {!result.is_showdown || result.win_reason === 'others_folded'
       ? <p className="result-reason">{language === 'zh' ? '其他玩家弃牌' : 'All other players folded'}</p>
@@ -31,5 +37,6 @@ export function HandResultCard({ language, result }: { language: Language; resul
           <b>{player.hand_name}</b>
         </div>)}</div>
       </>}
+    </div>}
   </section>
 }

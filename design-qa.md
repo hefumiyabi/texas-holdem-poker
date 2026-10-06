@@ -6,7 +6,7 @@ Visual reference: `/Users/guangkaichen/.codex/generated_images/01a105cb-5b26-7e0
 
 ## Automated verification
 
-- `npm test`: 18 files, 34 tests passed.
+- `npm test`: 18 files, 35 tests passed.
 - `npm run build`: TypeScript and Vite production build passed.
 - `.venv/bin/python -m pytest -q`: 67 tests passed.
 - Browser console: no warnings or errors during the complete flow.
@@ -30,6 +30,7 @@ Completed in the Codex in-app browser against `http://127.0.0.1:8899`:
 13. Verified the compact GTO reference expands to show equity, pot odds, and a plain-language recommendation without covering the action buttons.
 14. Reached a real showdown and verified the result card exposed both legal hands, named the winning `A高同花`, and explained that it beat `A高牌` while leaving the hero cards visible.
 15. Verified current blinds and the number of hands until the next increase are visible; the second hand correctly changed the countdown from five to four.
+16. Verified the completed-hand result sits at `y=70..238.5` while community cards sit at `y=358.75..413.75` on 390×844, with no overlap against the board, hero cards, or next-hand control. Collapsing reduces the result to `y=70..115` and restores the full board-review view.
 
 ## Responsive evidence
 
@@ -60,6 +61,7 @@ The implementation retains the selected reference’s warm private-lounge atmosp
 - P1: reconstructed tables lost their hand number and table-scoped stacks. Completed-hand progress now persists atomically and restores the correct blind level and chips.
 - P1: one bot completion log printed the raw result object, including mucked cards after a fold. Replaced it with scalar showdown metadata and added a log privacy regression test.
 - P2: the turn ring lacked a visible countdown and split pots named only the first winner. Added visible remaining seconds plus explicit winner/payout chips for every split-pot winner.
+- P2: the full hand-result card covered the community cards during review. Moved it below the header, added an accessible collapse/restore control, and measured zero overlap at 390×844.
 - P2: the original bottom utility navigation competed with primary actions. Replaced it with top-level lineup, invite, and settings controls.
 - Recheck: all P1/P2 findings fixed; browser console clean; no overflow at target viewports.
 
