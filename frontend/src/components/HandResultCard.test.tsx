@@ -15,11 +15,12 @@ const showdown: HandResult = {
 
 describe('HandResultCard', () => {
   it('explains the winning hand and shows legally revealed cards', () => {
-    render(<HandResultCard language="zh" result={showdown} />)
+    render(<HandResultCard language="zh" currency="JPY" result={showdown} />)
     expect(screen.getByText('Hero 获胜')).toBeInTheDocument()
     expect(screen.getByText('A高顺子')).toBeInTheDocument()
     expect(screen.getByLabelText('Hero 手牌')).toHaveTextContent('A♠K♦')
     expect(screen.getByText('击败 一对Q')).toBeInTheDocument()
+    expect(screen.getByText('+JP¥320')).toBeInTheDocument()
   })
 
   it('does not invent or reveal mucked cards after a fold win', () => {
@@ -29,7 +30,7 @@ describe('HandResultCard', () => {
   })
 
   it('names every winner and payout for a split pot', () => {
-    render(<HandResultCard language="zh" result={{
+    render(<HandResultCard language="zh" currency="JPY" result={{
       ...showdown,
       winners: [
         { player_id: 'p1', nickname: 'Hero', amount: 160, chips: 1160 },
@@ -38,8 +39,8 @@ describe('HandResultCard', () => {
       showdown_players: showdown.showdown_players.map((player) => ({ ...player, result: 'winner', winnings: 160, hand_description: 'A高顺子', hand_name: '顺子', rank: 1 })),
     }} />)
     expect(screen.getByText('Hero、Bot 平分底池')).toBeInTheDocument()
-    expect(screen.getByText('Hero +160')).toBeInTheDocument()
-    expect(screen.getByText('Bot +160')).toBeInTheDocument()
+    expect(screen.getByText('Hero +JP¥160')).toBeInTheDocument()
+    expect(screen.getByText('Bot +JP¥160')).toBeInTheDocument()
   })
 
   it('collapses to a summary and restores showdown details', () => {

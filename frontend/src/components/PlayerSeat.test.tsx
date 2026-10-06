@@ -12,8 +12,10 @@ describe('PlayerSeat states', () => {
   })
 
   it('does not show an action countdown for human players', () => {
-    render(<PlayerSeat language="zh" player={human} active self now={100} />)
+    render(<PlayerSeat language="zh" currency="JPY" player={{ ...human, current_bet: 40 }} active self now={100} />)
     expect(screen.queryByRole('timer')).not.toBeInTheDocument()
+    expect(screen.getByText('JP¥900')).toBeInTheDocument()
+    expect(screen.getByText('JP¥40')).toBeInTheDocument()
   })
 
   it('shows bot thinking countdown', () => {

@@ -12,11 +12,13 @@ const bot = {
 
 describe('BotSeat', () => {
   it('uses the persona portrait and exposes thinking state with a timer', () => {
-    render(<BotSeat language="zh" player={bot} active thinking />)
+    render(<BotSeat language="zh" currency="JPY" player={bot} active thinking />)
 
     expect(screen.getByRole('img', { name: '深海鱼' })).toHaveAttribute('src', '/avatars/aggressive.webp')
     expect(screen.getByText('爱诈唬')).toBeInTheDocument()
     expect(screen.getByText('思考中')).toBeInTheDocument()
     expect(screen.getByRole('timer', { name: '深海鱼思考中' })).toBeInTheDocument()
+    expect(screen.getByText('JP¥1,860')).toBeInTheDocument()
+    expect(screen.getByText('JP¥40')).toBeInTheDocument()
   })
 })

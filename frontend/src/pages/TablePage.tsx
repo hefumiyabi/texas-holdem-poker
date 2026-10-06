@@ -70,6 +70,7 @@ export function TablePage({ preferences, onPreferences }: { preferences: Prefere
   const level = snapshot.room.difficulty || 'intermediate'
   const maxPlayers = table.max_players || snapshot.room.max_players || Math.max(2, table.players.length)
   const seatPositions = getSeatPositions(maxPlayers)
+  const currency = snapshot.room.currency || 'CNY'
   const betweenHands = table.game_stage === 'waiting' || table.game_stage === 'finished'
   const addBot = (persona: BotPersona) => socket?.emit('bot:add', { level, persona })
   const removeBot = (playerId: string) => socket?.emit('bot:remove', { player_id: playerId })
@@ -79,23 +80,23 @@ export function TablePage({ preferences, onPreferences }: { preferences: Prefere
     <TableHeader language={language} room={snapshot.room} table={table} copied={copied} onBack={leave} onMenu={() => setSettings(true)} onShare={share} onLineup={() => setLineup(true)} />
     <section className="poker-stage">
       <div className="ambient-ring" aria-hidden="true"/>
-      <PokerBoard language={language} table={table} />
+      <PokerBoard language={language} table={table} currency={currency} />
       <div className="seats-layer">
-        {ordered.map((player, index) => <PlayerSeat key={player.id} language={language} player={player} self={player.id === snapshot.viewer_id} active={player.id === table.current_player_id} thinkingUntil={player.id === table.current_player_id ? snapshot.thinking_until : undefined} style={seatPositions[index]}/>) }
+        {ordered.map((player, index) => <PlayerSeat key={player.id} language={language} currency={currency} player={player} self={player.id === snapshot.viewer_id} active={player.id === table.current_player_id} thinkingUntil={player.id === table.current_player_id ? snapshot.thinking_until : undefined} style={seatPositions[index]}/>) }
         {betweenHands && snapshot.room.is_host && Array.from({ length: Math.max(0, maxPlayers - ordered.length) }, (_, index) => <button key={`empty-${index}`} className="empty-table-seat" style={seatPositions[ordered.length + index]} onClick={() => setLineup(true)} aria-label={translate(language, 'emptySeat')}><Plus /></button>)}
       </div>
-      <HeroStack player={viewer} />
+      <HeroStack player={viewer} currency={currency} />
       {state.lastAction && <div className="action-toast">{state.lastAction}</div>}
       {state.error && <button className="error-toast" onClick={() => dispatch({ type: 'clear-error' })}>{state.error}</button>}
       {snapshot.analysis && <GtoCoachCard language={language} analysis={snapshot.analysis}/>}
-      {snapshot.last_hand_result && table.game_stage === 'finished' && <HandResultCard language={language} result={snapshot.last_hand_result}/>}
+      {snapshot.last_hand_result && table.game_stage === 'finished' && <HandResultCard language={language} currency={currency} result={snapshot.last_hand_result}/>}
     </section>
     {table.game_stage === 'waiting' ? <div className="host-controls">
       {snapshot.room.is_host && <><button onClick={() => setLineup(true)}><Plus/>{translate(language, 'lineup')}</button><button className="gold-button" disabled={!table.can_start} onClick={() => socket?.emit('hand:start')}><Spade weight="fill"/>{translate(language, 'startHand')}</button></>}
       {!snapshot.room.is_host && <p>{translate(language, 'waiting')}</p>}
     </div> : table.game_stage === 'finished'
       ? <div className="host-controls"><button className="gold-button" onClick={() => socket?.emit('round:vote')}><Spade/>{translate(language, 'nextHand')}</button></div>
-      : <ActionRail language={language} table={table} player={viewer} enabled={isTurn} onAct={act} onSizingChange={setBetSizing}/>
+      : <ActionRail language={language} currency={currency} table={table} player={viewer} enabled={isTurn} onAct={act} onSizingChange={setBetSizing}/>
     }
     {lineup && <LineupDrawer language={language} players={table.players} maxPlayers={maxPlayers} difficulty={level} host={Boolean(snapshot.room.is_host)} waiting={betweenHands} onClose={() => setLineup(false)} onAdd={addBot} onRemove={removeBot} onReplace={replaceBot} onShare={share} />}
     {settings && <SettingsDrawer preferences={preferences} onChange={onPreferences} onClose={() => setSettings(false)}/>} 

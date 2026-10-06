@@ -1,7 +1,8 @@
 import { useState } from 'react'
-import type { HandResult, Language } from '../types'
+import { formatMoney } from '../currency'
+import type { CurrencyCode, HandResult, Language } from '../types'
 
-export function HandResultCard({ language, result }: { language: Language; result: HandResult }) {
+export function HandResultCard({ language, result, currency }: { language: Language; result: HandResult; currency?: CurrencyCode }) {
   const [collapsed, setCollapsed] = useState(false)
   const winner = result.winners[0]
   const winningPlayer = result.showdown_players.find((player) =>
@@ -21,9 +22,9 @@ export function HandResultCard({ language, result }: { language: Language; resul
     ? (language === 'zh' ? '其他玩家弃牌' : 'Others folded')
     : winningPlayer?.hand_description
   return <section className={`hand-result-card ${collapsed ? 'collapsed' : ''}`} role="status">
-    <header><small>{language === 'zh' ? '本手结果' : 'Hand result'}</small><strong><span className="result-title">{title}</span>{collapsed && collapsedSummary && <em>{collapsedSummary}</em>}</strong>{!split && <span className="result-payout">+{winner?.amount ?? result.pot}</span>}<button onClick={() => setCollapsed((value) => !value)} aria-expanded={!collapsed}>{toggleLabel}</button></header>
+    <header><small>{language === 'zh' ? '本手结果' : 'Hand result'}</small><strong><span className="result-title">{title}</span>{collapsed && collapsedSummary && <em>{collapsedSummary}</em>}</strong>{!split && <span className="result-payout">+{formatMoney(winner?.amount ?? result.pot, currency)}</span>}<button onClick={() => setCollapsed((value) => !value)} aria-expanded={!collapsed}>{toggleLabel}</button></header>
     {!collapsed && <div className="result-details">
-    {split && <div className="winner-payouts">{result.winners.map((entry) => <span key={entry.player_id || entry.nickname}>{entry.nickname} +{entry.amount}</span>)}</div>}
+    {split && <div className="winner-payouts">{result.winners.map((entry) => <span key={entry.player_id || entry.nickname}>{entry.nickname} +{formatMoney(entry.amount, currency)}</span>)}</div>}
     {!result.is_showdown || result.win_reason === 'others_folded'
       ? <p className="result-reason">{language === 'zh' ? '其他玩家弃牌' : 'All other players folded'}</p>
       : <>

@@ -1,9 +1,10 @@
 import { useEffect, useState, type CSSProperties } from 'react'
 import { WifiSlash } from '@phosphor-icons/react'
+import { formatMoney } from '../currency'
 import { translate } from '../i18n'
-import type { Language, Player } from '../types'
+import type { CurrencyCode, Language, Player } from '../types'
 
-export function BotSeat({ player, active, thinking, thinkingUntil, now, style, language }: {
+export function BotSeat({ player, active, thinking, thinkingUntil, now, style, language, currency }: {
   player: Player
   active: boolean
   thinking?: boolean
@@ -11,6 +12,7 @@ export function BotSeat({ player, active, thinking, thinkingUntil, now, style, l
   now?: number
   style?: CSSProperties
   language: Language
+  currency?: CurrencyCode
 }) {
   const disconnected = player.status === 'disconnected'
   const folded = player.status === 'folded'
@@ -28,7 +30,7 @@ export function BotSeat({ player, active, thinking, thinkingUntil, now, style, l
     : (language === 'zh' ? `${player.nickname} 思考中，约 ${seconds} 秒` : `${player.nickname} is thinking, about ${seconds} seconds`)
 
   return <div className={`player-seat bot-seat ${active ? 'active' : ''} ${disconnected ? 'dimmed' : ''} ${folded ? 'folded' : ''}`} style={style}>
-    {player.current_bet > 0 && <span className="seat-bet"><i />{player.current_bet.toLocaleString()}</span>}
+    {player.current_bet > 0 && <span className="seat-bet"><i />{formatMoney(player.current_bet, currency)}</span>}
     <div className="avatar-ring">
       <img className="avatar portrait-avatar" src={`/avatars/${persona}.webp`} alt={player.nickname} />
       {active && <span className="turn-timer" role="timer" aria-label={timerLabel}><i /></span>}
@@ -36,7 +38,7 @@ export function BotSeat({ player, active, thinking, thinkingUntil, now, style, l
     </div>
     <div className="seat-identity">
       <strong>{player.nickname}</strong>
-      <span>{disconnected ? <><WifiSlash /> OFFLINE</> : player.chips.toLocaleString()}</span>
+      <span>{disconnected ? <><WifiSlash /> OFFLINE</> : formatMoney(player.chips, currency)}</span>
     </div>
     <span className="persona-badge">{personaLabel}</span>
     {thinking && active && <span className="thinking-badge">{translate(language, 'botThinking')}</span>}

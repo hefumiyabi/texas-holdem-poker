@@ -21,10 +21,10 @@ const viewer: Player = {
 
 describe('HeroStack', () => {
   it('keeps the viewer name and current chips with their hand', () => {
-    render(<HeroStack player={viewer} />)
+    render(<HeroStack player={viewer} currency="JPY" />)
 
     expect(screen.getByText('River')).toBeInTheDocument()
-    expect(screen.getByLabelText('Your chips')).toHaveTextContent('4,980')
+    expect(screen.getByLabelText('Your chips')).toHaveTextContent('JP¥4,980')
     expect(screen.getByLabelText('Your hand').querySelectorAll('.playing-card')).toHaveLength(2)
   })
 })
