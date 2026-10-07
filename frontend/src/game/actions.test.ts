@@ -20,12 +20,39 @@ describe('poker actions', () => {
     ])
   })
 
-  it('caps pot presets at the player all-in amount', () => {
-    expect(getBetPresets({ pot: 400, min: 100, max: 250 })).toEqual([
-      { label: '½', amount: 200 },
-      { label: '¾', amount: 250 },
-      { label: '1×', amount: 250 },
-      { label: 'MAX', amount: 250 },
+  it('uses the unopened pot and big blind for sizing targets', () => {
+    expect(getBetPresets({ pot: 120, currentBet: 0, playerBet: 0, min: 20, max: 1000, bigBlind: 20 })).toEqual([
+      { id: 'half-pot', label: '½', amount: 60 },
+      { id: 'three-quarter-pot', label: '¾', amount: 90 },
+      { id: 'pot', label: 'Pot', amount: 120 },
+      { id: '3x', label: '3×', amount: 60 },
+      { id: '4x', label: '4×', amount: 80 },
+      { id: '6x', label: '6×', amount: 120 },
+      { id: 'all-in', label: 'All in', amount: 1000 },
+    ])
+  })
+
+  it('uses pot-after-call formulas and current-bet multipliers when facing a bet', () => {
+    expect(getBetPresets({ pot: 240, currentBet: 40, playerBet: 20, min: 80, max: 1000, bigBlind: 20 })).toEqual([
+      { id: 'half-pot', label: '½', amount: 170 },
+      { id: 'three-quarter-pot', label: '¾', amount: 235 },
+      { id: 'pot', label: 'Pot', amount: 300 },
+      { id: '3x', label: '3×', amount: 120 },
+      { id: '4x', label: '4×', amount: 160 },
+      { id: '6x', label: '6×', amount: 240 },
+      { id: 'all-in', label: 'All in', amount: 1000 },
+    ])
+  })
+
+  it('rounds to integers and clamps every target to the legal range', () => {
+    expect(getBetPresets({ pot: 101, currentBet: 0, playerBet: 0, min: 200, max: 250, bigBlind: 20 })).toEqual([
+      { id: 'half-pot', label: '½', amount: 200 },
+      { id: 'three-quarter-pot', label: '¾', amount: 200 },
+      { id: 'pot', label: 'Pot', amount: 200 },
+      { id: '3x', label: '3×', amount: 200 },
+      { id: '4x', label: '4×', amount: 200 },
+      { id: '6x', label: '6×', amount: 200 },
+      { id: 'all-in', label: 'All in', amount: 250 },
     ])
   })
 })
