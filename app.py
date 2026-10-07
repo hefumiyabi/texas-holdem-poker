@@ -1591,7 +1591,7 @@ def _finalize_v1_disconnect(player_id: str, table_id: str, *, explicit: bool = F
         )
         if next_human:
             db.transfer_table_host(table_id, next_human['player_id'])
-        else:
+        elif explicit:
             db.close_specific_table(table_id)
             tables.pop(table_id, None)
             return

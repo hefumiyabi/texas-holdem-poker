@@ -837,6 +837,21 @@ class V1SocketTestCase(unittest.TestCase):
         self.assertEqual(expired["tournament_status"], "spectating")
         self.assertIsNotNone(expired["disconnected_at"])
 
+    def test_expired_sole_host_is_retained_as_spectator_without_closing_room(self):
+        _host_client, host, room = self.create_room(max_players=2)
+        table = self.app_module.tables[room["id"]]
+        table.get_player(host["id"]).disconnected_at = 1000
+        self.app_module.db.set_player_disconnected_at(room["id"], host["id"], 1000)
+
+        self.app_module._finalize_v1_disconnect(host["id"], room["id"], now=4600)
+
+        record = self.app_module.db.get_table(room["id"])
+        self.assertIsNotNone(record)
+        self.assertEqual(record["host_id"], host["id"])
+        row = next(row for row in self.app_module.db.get_table_players(room["id"])
+                   if row["player_id"] == host["id"])
+        self.assertEqual(row["tournament_status"], "spectating")
+
     def test_host_leave_transfers_control_immediately(self):
         host_client, _host, room = self.create_room()
         guest_client, guest = self.guest_client("Guest")

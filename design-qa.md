@@ -8,7 +8,7 @@ Visual reference: `/Users/guangkaichen/.codex/generated_images/01a105cb-5b26-7e0
 
 - `npm --prefix frontend test -- --run`: 23 files, 61 tests passed.
 - `npm --prefix frontend run build`: TypeScript and Vite production build passed (4,638 modules; JS 431.20 kB / gzip 133.75 kB; CSS 37.59 kB / gzip 8.86 kB).
-- `.venv/bin/python -m unittest discover -s tests`: 92 tests passed.
+- `.venv/bin/python -m unittest discover -s tests`: 93 tests passed.
 - Load smoke: 10 rooms / 60 Socket.IO clients passed in 0.56 s; wrapper wall time 0.99 s, CPU 0.93 s, peak RSS 44.4 MiB.
 - Browser console: no warnings or errors during the current local acceptance flow.
 
