@@ -556,6 +556,12 @@ def _table_from_record(record: Dict) -> Table:
         game_mode=record.get('game_mode', 'blinds'),
         ante_percentage=record.get('ante_percentage', 0.02),
     )
+    table.rebuy_limit = record.get('rebuy_limit', 1)
+    table.blind_level_seconds = int(record.get('blind_level_seconds') or 600)
+    table.tournament_elapsed_seconds = float(record.get('tournament_elapsed_seconds') or 0)
+    table.tournament_clock_anchor = record.get('tournament_clock_anchor')
+    table.blind_level = int(record.get('blind_level') or 1)
+    table.clock_paused = bool(record.get('clock_paused', 1))
     table.hand_number = int(record.get('hand_number') or 0)
     if table.hand_number:
         multiplier = 2 ** ((table.hand_number - 1) // table.blind_increase_interval)
@@ -582,6 +588,9 @@ def _table_from_record(record: Dict) -> Table:
             # previous room leaks the old room's stack into a newly selected buy-in.
             player = Player(row['player_id'], user['nickname'], row['chips'])
         players[player.id] = player
+        player.rebuys_used = int(row.get('rebuys_used') or 0)
+        player.tournament_status = row.get('tournament_status') or 'active'
+        player.disconnected_at = row.get('disconnected_at')
         table.add_player_at_position(player, row['position'])
     return table
 
@@ -601,6 +610,9 @@ def _room_preview(record: Dict) -> Dict:
         'ante_percentage': record.get('ante_percentage', 0.02),
         'mode': record.get('room_mode', 'private'),
         'difficulty': record.get('bot_difficulty'),
+        'rebuy_limit': ('unlimited' if record.get('rebuy_limit') is None
+                        else int(record.get('rebuy_limit', 1))),
+        'blind_level_seconds': int(record.get('blind_level_seconds') or 600),
         'player_count': len(room_players),
         'host': {'nickname': host['nickname']} if host else None,
     }
@@ -702,6 +714,13 @@ def create_private_room_v1(guest):
     room_mode = str(data.get('mode', 'private')).lower()
     title = str(data.get('title', '人格牌局' if room_mode == 'bot_challenge' else '好友牌桌')).strip()
     currency = str(data.get('currency', 'CNY')).upper()
+    raw_rebuy_limit = data.get('rebuy_limit', 1)
+    if raw_rebuy_limit == 'unlimited':
+        rebuy_limit = None
+    elif type(raw_rebuy_limit) is int and raw_rebuy_limit in (0, 1, 2, 3):
+        rebuy_limit = raw_rebuy_limit
+    else:
+        return jsonify({'success': False, 'message': '重买次数无效'}), 400
 
     def strict_integer(key, default):
         value = data.get(key, default)
@@ -760,6 +779,7 @@ def create_private_room_v1(guest):
             bots=bot_specs,
             small_blind=small_blind,
             big_blind=big_blind,
+            rebuy_limit=rebuy_limit,
         )
         record = db.get_table(table_id)
         _table_from_record(record)
@@ -779,6 +799,7 @@ def create_private_room_v1(guest):
         visibility='private',
         room_mode='private',
         currency=currency,
+        rebuy_limit=rebuy_limit,
     )
     db.join_table(table_id, guest['player_id'], 0)
     record = db.get_table(table_id)

@@ -178,6 +178,42 @@ class V1ApiTestCase(unittest.TestCase):
             )
             self.assertEqual(response.status_code, 400, payload)
 
+    def test_room_accepts_supported_rebuy_limits(self):
+        client = self.app_module.app.test_client()
+        self.create_guest(client, "Rebuy Host")
+
+        for value, expected in ((0, 0), (1, 1), (2, 2), (3, 3), ("unlimited", "unlimited")):
+            response = client.post("/api/v1/rooms", json={
+                "title": f"Rebuy {value}",
+                "max_players": 2,
+                "rebuy_limit": value,
+            })
+            self.assertEqual(response.status_code, 201, response.get_data(as_text=True))
+            room = response.get_json()["room"]
+            self.assertEqual(room["rebuy_limit"], expected)
+            stored = self.app_module.db.get_table(room["id"])["rebuy_limit"]
+            self.assertEqual(stored, None if value == "unlimited" else value)
+
+        challenge = client.post("/api/v1/rooms", json={
+            "mode": "bot_challenge",
+            "seat_count": 2,
+            "rebuy_limit": 2,
+        })
+        self.assertEqual(challenge.status_code, 201, challenge.get_data(as_text=True))
+        self.assertEqual(challenge.get_json()["room"]["rebuy_limit"], 2)
+
+    def test_room_rejects_invalid_rebuy_limits(self):
+        client = self.app_module.app.test_client()
+        self.create_guest(client, "Invalid Rebuy Host")
+
+        for value in (True, 1.5, -1, 4, "forever", None):
+            response = client.post("/api/v1/rooms", json={
+                "title": "Invalid Rebuy",
+                "max_players": 2,
+                "rebuy_limit": value,
+            })
+            self.assertEqual(response.status_code, 400, value)
+
     def test_room_preview_is_private_safe_and_join_requires_auth(self):
         host = self.app_module.app.test_client()
         self.create_guest(host, "Host")

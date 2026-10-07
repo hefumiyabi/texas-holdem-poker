@@ -66,6 +66,12 @@ class PokerDatabase:
                     is_active BOOLEAN DEFAULT 1,
                     room_mode TEXT NOT NULL DEFAULT 'private',
                     bot_difficulty TEXT,
+                    rebuy_limit INTEGER DEFAULT 1,
+                    blind_level_seconds INTEGER NOT NULL DEFAULT 600,
+                    tournament_elapsed_seconds REAL NOT NULL DEFAULT 0,
+                    tournament_clock_anchor REAL,
+                    blind_level INTEGER NOT NULL DEFAULT 1,
+                    clock_paused BOOLEAN NOT NULL DEFAULT 1,
                     FOREIGN KEY (created_by) REFERENCES users (id),
                     FOREIGN KEY (current_player_id) REFERENCES users (id)
                 )
@@ -86,6 +92,9 @@ class PokerDatabase:
                     is_bot BOOLEAN DEFAULT 0,
                     bot_level TEXT,
                     bot_persona TEXT,
+                    rebuys_used INTEGER NOT NULL DEFAULT 0,
+                    tournament_status TEXT NOT NULL DEFAULT 'active',
+                    disconnected_at REAL,
                     joined_at REAL NOT NULL,
                     FOREIGN KEY (table_id) REFERENCES tables (id),
                     FOREIGN KEY (player_id) REFERENCES users (id),
@@ -123,11 +132,29 @@ class PokerDatabase:
                 cursor.execute('ALTER TABLE tables ADD COLUMN bot_difficulty TEXT')
             if 'currency' not in table_columns:
                 cursor.execute("ALTER TABLE tables ADD COLUMN currency TEXT NOT NULL DEFAULT 'CNY'")
+            if 'rebuy_limit' not in table_columns:
+                cursor.execute('ALTER TABLE tables ADD COLUMN rebuy_limit INTEGER DEFAULT 1')
+            if 'blind_level_seconds' not in table_columns:
+                cursor.execute('ALTER TABLE tables ADD COLUMN blind_level_seconds INTEGER NOT NULL DEFAULT 600')
+            if 'tournament_elapsed_seconds' not in table_columns:
+                cursor.execute('ALTER TABLE tables ADD COLUMN tournament_elapsed_seconds REAL NOT NULL DEFAULT 0')
+            if 'tournament_clock_anchor' not in table_columns:
+                cursor.execute('ALTER TABLE tables ADD COLUMN tournament_clock_anchor REAL')
+            if 'blind_level' not in table_columns:
+                cursor.execute('ALTER TABLE tables ADD COLUMN blind_level INTEGER NOT NULL DEFAULT 1')
+            if 'clock_paused' not in table_columns:
+                cursor.execute('ALTER TABLE tables ADD COLUMN clock_paused BOOLEAN NOT NULL DEFAULT 1')
             player_columns = {
                 row['name'] for row in cursor.execute('PRAGMA table_info(table_players)').fetchall()
             }
             if 'bot_persona' not in player_columns:
                 cursor.execute('ALTER TABLE table_players ADD COLUMN bot_persona TEXT')
+            if 'rebuys_used' not in player_columns:
+                cursor.execute('ALTER TABLE table_players ADD COLUMN rebuys_used INTEGER NOT NULL DEFAULT 0')
+            if 'tournament_status' not in player_columns:
+                cursor.execute("ALTER TABLE table_players ADD COLUMN tournament_status TEXT NOT NULL DEFAULT 'active'")
+            if 'disconnected_at' not in player_columns:
+                cursor.execute('ALTER TABLE table_players ADD COLUMN disconnected_at REAL')
             cursor.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_tables_join_code ON tables(join_code)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_guest_sessions_player ON guest_sessions(player_id)')
             
@@ -207,7 +234,8 @@ class PokerDatabase:
                     game_mode: str = "blinds", ante_percentage: float = 0.02,
                     join_code: Optional[str] = None, host_id: Optional[str] = None,
                     visibility: str = "private", room_mode: str = "private",
-                    bot_difficulty: Optional[str] = None, currency: str = "CNY") -> str:
+                    bot_difficulty: Optional[str] = None, currency: str = "CNY",
+                    rebuy_limit: Optional[int] = 1) -> str:
         """创建新房间"""
         with self.lock:
             with self.get_connection() as conn:
@@ -220,12 +248,13 @@ class PokerDatabase:
                     INSERT INTO tables (
                         id, title, small_blind, big_blind, max_players, initial_chips,
                         game_mode, ante_percentage, created_by, created_at, last_activity,
-                        join_code, host_id, visibility, room_mode, bot_difficulty, currency
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        join_code, host_id, visibility, room_mode, bot_difficulty, currency,
+                        rebuy_limit
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (table_id, title, small_blind, big_blind, max_players, 
                       initial_chips, game_mode, ante_percentage, created_by, 
                       current_time, current_time, join_code, host_id or created_by, visibility,
-                      room_mode, bot_difficulty, currency))
+                      room_mode, bot_difficulty, currency, rebuy_limit))
                 
                 conn.commit()
                 print(f"创建新房间: {title} (ID: {table_id}) by {created_by}, 模式: {game_mode}")
@@ -234,7 +263,8 @@ class PokerDatabase:
     def create_challenge_room(self, title: str, created_by: str, join_code: str,
                               difficulty: str, max_players: int, initial_chips: int,
                               bots: List[Dict], small_blind: int = 10,
-                              big_blind: int = 20) -> str:
+                              big_blind: int = 20,
+                              rebuy_limit: Optional[int] = 1) -> str:
         """Create the challenge room, host seat, and bot lineup in one transaction."""
         with self.lock:
             with self.get_connection() as conn:
@@ -244,11 +274,12 @@ class PokerDatabase:
                     INSERT INTO tables (
                         id, title, small_blind, big_blind, max_players, initial_chips,
                         game_mode, ante_percentage, created_by, created_at, last_activity,
-                        join_code, host_id, visibility, room_mode, bot_difficulty
+                        join_code, host_id, visibility, room_mode, bot_difficulty,
+                        rebuy_limit
                     ) VALUES (?, ?, ?, ?, ?, ?, 'blinds', 0.02, ?, ?, ?, ?, ?, 'private',
-                              'bot_challenge', ?)
+                              'bot_challenge', ?, ?)
                 ''', (table_id, title, small_blind, big_blind, max_players, initial_chips,
-                      created_by, now, now, join_code, created_by, difficulty))
+                      created_by, now, now, join_code, created_by, difficulty, rebuy_limit))
                 conn.execute('''
                     INSERT INTO table_players (table_id, player_id, position, chips, joined_at)
                     VALUES (?, ?, 0, ?, ?)
@@ -345,6 +376,36 @@ class PokerDatabase:
             )
             row = cursor.fetchone()
             return dict(row) if row else None
+
+    def update_tournament_runtime(self, table_id: str, *, elapsed_seconds: float,
+                                  clock_anchor: Optional[float], blind_level: int,
+                                  clock_paused: bool) -> bool:
+        """Persist the event-derived tournament clock for one active room."""
+        with self.lock:
+            with self.get_connection() as conn:
+                cursor = conn.execute('''
+                    UPDATE tables
+                    SET tournament_elapsed_seconds = ?, tournament_clock_anchor = ?,
+                        blind_level = ?, clock_paused = ?, last_activity = ?
+                    WHERE id = ? AND is_active = 1
+                ''', (elapsed_seconds, clock_anchor, blind_level, int(clock_paused),
+                      time.time(), table_id))
+                conn.commit()
+                return cursor.rowcount > 0
+
+    def update_table_player_tournament_state(self, table_id: str, player_id: str, *,
+                                             rebuys_used: int, tournament_status: str,
+                                             disconnected_at: Optional[float]) -> bool:
+        """Persist tournament-only seat state without changing gameplay fields."""
+        with self.lock:
+            with self.get_connection() as conn:
+                cursor = conn.execute('''
+                    UPDATE table_players
+                    SET rebuys_used = ?, tournament_status = ?, disconnected_at = ?
+                    WHERE table_id = ? AND player_id = ?
+                ''', (rebuys_used, tournament_status, disconnected_at, table_id, player_id))
+                conn.commit()
+                return cursor.rowcount > 0
 
     def create_guest_session(self, token_hash: str, player_id: str, expires_at: float) -> None:
         now = time.time()

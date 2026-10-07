@@ -62,6 +62,74 @@ class PokerDatabaseCurrencyTests(unittest.TestCase):
             ]
         self.assertEqual(currency_columns, ["currency"])
 
+    def test_tournament_columns_migrate_idempotently(self):
+        database = PokerDatabase(self.db_path)
+        database = PokerDatabase(self.db_path)
+
+        with database.get_connection() as connection:
+            table_columns = {
+                row["name"]: row for row in connection.execute("PRAGMA table_info(tables)")
+            }
+            player_columns = {
+                row["name"]: row for row in connection.execute("PRAGMA table_info(table_players)")
+            }
+
+        self.assertEqual(table_columns["rebuy_limit"]["dflt_value"], "1")
+        self.assertEqual(table_columns["blind_level_seconds"]["dflt_value"], "600")
+        self.assertEqual(table_columns["tournament_elapsed_seconds"]["dflt_value"], "0")
+        self.assertEqual(table_columns["blind_level"]["dflt_value"], "1")
+        self.assertEqual(table_columns["clock_paused"]["dflt_value"], "1")
+        self.assertEqual(player_columns["rebuys_used"]["dflt_value"], "0")
+        self.assertEqual(player_columns["tournament_status"]["dflt_value"], "'active'")
+        self.assertIn("disconnected_at", player_columns)
+
+    def test_room_persists_finite_and_unlimited_rebuy_limits(self):
+        database = PokerDatabase(self.db_path)
+        host_id = database.create_user("Tournament Host")
+
+        default_id = database.create_table("Default", host_id)
+        finite_id = database.create_table("Finite", host_id, rebuy_limit=3)
+        unlimited_id = database.create_table("Unlimited", host_id, rebuy_limit=None)
+
+        self.assertEqual(database.get_table(default_id)["rebuy_limit"], 1)
+        self.assertEqual(database.get_table(finite_id)["rebuy_limit"], 3)
+        self.assertIsNone(database.get_table(unlimited_id)["rebuy_limit"])
+        self.assertTrue(database.update_tournament_runtime(
+            finite_id,
+            elapsed_seconds=601.5,
+            clock_anchor=1234.0,
+            blind_level=2,
+            clock_paused=False,
+        ))
+        runtime = database.get_table(finite_id)
+        self.assertEqual(runtime["tournament_elapsed_seconds"], 601.5)
+        self.assertEqual(runtime["tournament_clock_anchor"], 1234.0)
+        self.assertEqual(runtime["blind_level"], 2)
+        self.assertEqual(runtime["clock_paused"], 0)
+
+    def test_table_player_persists_tournament_state(self):
+        database = PokerDatabase(self.db_path)
+        player_id = database.create_user("Player")
+        table_id = database.create_table("Tournament", player_id)
+        self.assertTrue(database.join_table(table_id, player_id, 0))
+
+        initial = database.get_table_players(table_id)[0]
+        self.assertEqual(initial["rebuys_used"], 0)
+        self.assertEqual(initial["tournament_status"], "active")
+        self.assertIsNone(initial["disconnected_at"])
+
+        self.assertTrue(database.update_table_player_tournament_state(
+            table_id,
+            player_id,
+            rebuys_used=2,
+            tournament_status="spectating",
+            disconnected_at=9876.0,
+        ))
+        updated = database.get_table_players(table_id)[0]
+        self.assertEqual(updated["rebuys_used"], 2)
+        self.assertEqual(updated["tournament_status"], "spectating")
+        self.assertEqual(updated["disconnected_at"], 9876.0)
+
 
 if __name__ == "__main__":
     unittest.main()
