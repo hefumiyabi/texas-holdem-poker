@@ -27,3 +27,21 @@ describe('short landscape table layout', () => {
     expect(css).toContain('.player-seat.self{transform:translate(-50%,-140%);}')
   })
 })
+
+describe('busted action readability', () => {
+  it('uses an opaque high-contrast treatment for the rebuy button', () => {
+    const rules = Array.from(document.styleSheets)
+      .flatMap((sheet) => Array.from(sheet.cssRules))
+    const rule = rules.find((candidate) =>
+      'selectorText' in candidate && candidate.selectorText === '.busted-actions .rebuy-button'
+    ) as CSSStyleRule | undefined
+
+    expect(rule).toBeDefined()
+    expect(rule?.style.fontSize).toBe('14px')
+    expect(rule?.style.fontWeight).toBe('800')
+    expect(rule?.style.color).toBe('rgb(23, 17, 8)')
+    expect(rule?.style.background).toBe('rgb(240, 207, 122)')
+    expect(rule?.style.opacity).toBe('1')
+    expect(rule?.style.textShadow).toBe('none')
+  })
+})

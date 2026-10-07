@@ -30,7 +30,7 @@ export function BustedControls({ language, currency, player, initialChips, onReb
       <small>{allowance}</small>
     </div>
     <div className="busted-actions">
-      {player.can_rebuy && <button className="gold-button" onClick={onRebuy} aria-label={rebuyLabel}><Stack />{rebuyLabel}</button>}
+      {player.can_rebuy && <button className="gold-button rebuy-button" onClick={onRebuy} aria-label={rebuyLabel}><Stack />{rebuyLabel}</button>}
       {!spectating && <button onClick={onSpectate}><Eye />{translate(language, 'keepWatching')}</button>}
       {spectating && onWatchNext && <button onClick={onWatchNext}><Eye />{translate(language, 'watchNextHand')}</button>}
       <button onClick={onLeave}><SignOut />{translate(language, 'exitTable')}</button>

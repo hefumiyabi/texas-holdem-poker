@@ -16,7 +16,9 @@ describe('BustedControls', () => {
     render(<BustedControls language="zh" currency="CNY" player={bustedPlayer} initialChips={5000} onRebuy={onRebuy} onSpectate={onSpectate} onLeave={onLeave}/>)
 
     expect(screen.getByText('还可重新买入 2 次')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: '重新买入 ¥5,000' }))
+    const rebuy = screen.getByRole('button', { name: '重新买入 ¥5,000' })
+    expect(rebuy).toHaveClass('rebuy-button')
+    fireEvent.click(rebuy)
     fireEvent.click(screen.getByRole('button', { name: '继续观看' }))
     fireEvent.click(screen.getByRole('button', { name: '退出牌桌' }))
     expect(onRebuy).toHaveBeenCalledOnce()
