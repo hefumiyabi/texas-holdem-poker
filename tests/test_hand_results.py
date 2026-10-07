@@ -30,6 +30,94 @@ class HandResultTestCase(unittest.TestCase):
         table.pot = 100
         return table, players
 
+    def settlement_table(self, stacks, bets, statuses=None):
+        table = Table('settlement', 'Settlement', 10, 20, max_players=len(stacks))
+        players = []
+        for index, (starting, invested) in enumerate(zip(stacks, bets)):
+            player = Player(f'p{index}', f'P{index}', starting - invested)
+            table.add_player(player)
+            # Table.add_player treats an initial zero stack as a fresh seat buy-in;
+            # restore the deliberately all-in post-bet stack used by this fixture.
+            player.chips = starting - invested
+            player.status = (statuses or [PlayerStatus.PLAYING] * len(stacks))[index]
+            player.total_bet = invested
+            players.append(player)
+        table.hand_players = players
+        table.hand_start_stacks = {player.id: starting for player, starting in zip(players, stacks)}
+        table.pot = sum(bets)
+        return table, players
+
+    def assert_balanced_results(self, result):
+        self.assertEqual(sum(row['net'] for row in result['player_results']), 0)
+        for row in result['player_results']:
+            self.assertEqual(row['net'], row['final_chips'] - row['starting_chips'])
+            self.assertEqual(row['payout'], row['final_chips'] - row['starting_chips'] + row['invested'])
+
+    def test_ordinary_showdown_has_authoritative_net_rows(self):
+        table, players = self.settlement_table([1000, 1000], [100, 100])
+        players[0].hole_cards = cards('As Ad')
+        players[1].hole_cards = cards('Ks Kd')
+        table.community_cards = cards('2c 7h 9s 3d 4c')
+
+        table._determine_winner()
+
+        result = table.last_hand_result
+        self.assert_balanced_results(result)
+        self.assertEqual([row['net'] for row in result['player_results']], [100, -100])
+        self.assertTrue(all(row['revealed'] for row in result['player_results']))
+
+    def test_fold_win_counts_uncalled_return_without_revealing_mucked_cards(self):
+        table, players = self.settlement_table(
+            [1000, 1000], [300, 100], [PlayerStatus.PLAYING, PlayerStatus.FOLDED]
+        )
+        players[0].hole_cards = cards('As Ad')
+        players[1].hole_cards = cards('Ks Kd')
+
+        table._determine_winner()
+
+        result = table.last_hand_result
+        self.assert_balanced_results(result)
+        rows = {row['player_id']: row for row in result['player_results']}
+        self.assertEqual(rows['p0']['payout'], 400)
+        self.assertEqual(rows['p0']['net'], 100)
+        self.assertEqual(rows['p1']['net'], -100)
+        self.assertFalse(rows['p1']['revealed'])
+        self.assertNotIn('hole_cards', rows['p1'])
+        self.assertEqual(len(result['player_results']), 2)
+
+    def test_split_pot_with_folded_dead_money_balances_every_player(self):
+        table, players = self.settlement_table(
+            [1000, 1000, 1000], [35, 35, 10],
+            [PlayerStatus.PLAYING, PlayerStatus.PLAYING, PlayerStatus.FOLDED],
+        )
+        players[0].hole_cards = cards('As Kd')
+        players[1].hole_cards = cards('Ah Kc')
+        players[2].hole_cards = cards('2c 3d')
+        table.community_cards = cards('Qs Jh Td 7c 8s')
+
+        table._determine_winner()
+
+        result = table.last_hand_result
+        self.assert_balanced_results(result)
+        self.assertEqual([row['net'] for row in result['player_results']], [5, 5, -10])
+        folded = next(row for row in result['player_results'] if row['player_id'] == 'p2')
+        self.assertFalse(folded['revealed'])
+        self.assertNotIn('hole_cards', folded)
+
+    def test_multi_side_pot_rows_balance_from_actual_final_stacks(self):
+        table, players = self.settlement_table([100, 1000, 1000], [100, 400, 400])
+        players[0].hole_cards = cards('As Ad')
+        players[1].hole_cards = cards('Ks Kd')
+        players[2].hole_cards = cards('Qs Qd')
+        table.community_cards = cards('2c 7h 9s 3d 4c')
+
+        table._determine_winner()
+
+        result = table.last_hand_result
+        self.assert_balanced_results(result)
+        self.assertEqual([row['net'] for row in result['player_results']], [200, 200, -400])
+        self.assertEqual([row['payout'] for row in result['player_results']], [300, 600, 0])
+
     def test_showdown_result_explains_winning_hand_and_reveals_only_contenders(self):
         table, players = self.table()
         players[0].hole_cards = cards('As Kd')

@@ -93,7 +93,7 @@ export function TablePage({ preferences, onPreferences }: { preferences: Prefere
       {state.lastAction && <div className="action-toast">{state.lastAction}</div>}
       {state.error && <button className="error-toast" onClick={() => dispatch({ type: 'clear-error' })}>{state.error}</button>}
       {snapshot.analysis && <GtoCoachCard language={language} analysis={snapshot.analysis}/>}
-      {snapshot.last_hand_result && table.game_stage === 'finished' && <HandResultCard language={language} currency={currency} result={snapshot.last_hand_result}/>}
+      {snapshot.last_hand_result && table.game_stage === 'finished' && <HandResultCard language={language} currency={currency} result={snapshot.last_hand_result} viewerId={snapshot.viewer_id}/>}
     </section>
     {viewer.chips <= 0 && betweenHands ? <BustedControls language={language} currency={currency} player={viewer} initialChips={snapshot.room.initial_chips || 1000} onRebuy={() => socket?.emit('player:rebuy')} onSpectate={() => socket?.emit('player:spectate')} onLeave={leave}/>
       : table.game_stage === 'waiting' ? <div className="host-controls">

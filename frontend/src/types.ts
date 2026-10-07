@@ -131,6 +131,21 @@ export interface ShowdownPlayer {
   final_chips: number
 }
 
+export interface PlayerHandResult {
+  player_id: string
+  nickname: string
+  is_bot: boolean
+  invested: number
+  payout: number
+  net: number
+  starting_chips: number
+  final_chips: number
+  revealed: boolean
+  hole_cards?: Card[]
+  hand_name?: string
+  hand_description?: string
+}
+
 export interface HandResult {
   is_showdown: boolean
   win_reason: string
@@ -138,6 +153,7 @@ export interface HandResult {
   community_cards: Card[]
   winners: HandResultWinner[]
   showdown_players: ShowdownPlayer[]
+  player_results: PlayerHandResult[]
   pots: { amount: number; winners: string[] }[]
 }
 

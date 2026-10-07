@@ -72,6 +72,7 @@ class Table:
         self.min_raise = big_blind if game_mode == "blinds" else max(1, int(initial_chips * ante_percentage))
         self.last_raise_size = self.min_raise  # 本轮最近一次完整加注的幅度（最小加注 = 当前下注 + 该值）
         self.hand_players: List[Player] = []   # 本手牌发到牌的玩家（按座位顺序），用于行动顺序与边池结算
+        self.hand_start_stacks: Dict[str, int] = {}
         self.dealer_id: Optional[str] = None
 
         self.dealer_position = 0
@@ -241,6 +242,8 @@ class Table:
         self.hand_number += 1
         self.game_stage = GameStage.PRE_FLOP  # 明确设置为PRE_FLOP阶段
         self.hand_players = active_players
+        # 必须在收取盲注前记录，结算净额才包含强制下注。
+        self.hand_start_stacks = {player.id: player.chips for player in active_players}
 
         self.deck.reset()
         self.deck.shuffle()
@@ -1185,6 +1188,11 @@ class Table:
 
     def _determine_winner(self) -> Dict:
         """结算本手牌：支持弃牌获胜、摊牌比牌、边池、平分底池与退还无人跟注的筹码"""
+        participants = list(self._participants())
+        starting_stacks = {
+            player.id: int(self.hand_start_stacks.get(player.id, player.chips + player.total_bet))
+            for player in participants
+        }
         contenders = [p for p in self.players if p.status in (PlayerStatus.PLAYING, PlayerStatus.ALL_IN)]
         total_pot = self.pot
 
@@ -1300,6 +1308,34 @@ class Table:
         showdown_info['winners'] = [{'player_id': p.id, 'nickname': p.nickname, 'amount': winnings[p.id], 'chips': p.chips}
                                     for p in winners]
 
+        # 每位拿到牌的玩家都获得一行权威结算。payout 包含赢取金额及无人跟注退还；
+        # net 直接由真实开局/终局筹码计算，因此边池、平分和零头都不会被展示层重算。
+        showdown_info['player_results'] = []
+        for player in participants:
+            starting = starting_stacks[player.id]
+            invested = int(player.total_bet)
+            final = int(player.chips)
+            revealed = bool(showdown_info['is_showdown'] and player in contenders)
+            hand = hands.get(player.id)
+            row = {
+                'player_id': player.id,
+                'nickname': player.nickname,
+                'is_bot': player.is_bot,
+                'invested': invested,
+                'payout': final - starting + invested,
+                'net': final - starting,
+                'starting_chips': starting,
+                'final_chips': final,
+                'revealed': revealed,
+            }
+            if revealed:
+                row.update({
+                    'hole_cards': [card.to_dict() for card in player.hole_cards],
+                    'hand_name': hand[0].value[1] if hand else '',
+                    'hand_description': HandEvaluator.hand_to_string(hand) if hand else '',
+                })
+            showdown_info['player_results'].append(row)
+
         # 筹码输光的玩家转为观战，不再参与之后的牌局
         for p in self.hand_players:
             if p.chips <= 0 and p in self.players and p.status != PlayerStatus.DISCONNECTED:
@@ -1338,6 +1374,26 @@ class Table:
                     'returned': player.get('returned', 0),
                     'final_chips': player.get('final_chips', 0),
                 })
+        player_results = []
+        for player in showdown_info.get('player_results', []):
+            row = {
+                'player_id': player.get('player_id'),
+                'nickname': player.get('nickname'),
+                'is_bot': bool(player.get('is_bot')),
+                'invested': int(player.get('invested', 0)),
+                'payout': int(player.get('payout', 0)),
+                'net': int(player.get('net', 0)),
+                'starting_chips': int(player.get('starting_chips', 0)),
+                'final_chips': int(player.get('final_chips', 0)),
+                'revealed': bool(player.get('revealed')),
+            }
+            if row['revealed']:
+                row.update({
+                    'hole_cards': list(player.get('hole_cards', [])),
+                    'hand_name': player.get('hand_name', ''),
+                    'hand_description': player.get('hand_description', ''),
+                })
+            player_results.append(row)
         return {
             'is_showdown': is_showdown,
             'win_reason': showdown_info.get('win_reason', ''),
@@ -1345,6 +1401,7 @@ class Table:
             'community_cards': list(showdown_info.get('community_cards', [])),
             'winners': winners,
             'showdown_players': players,
+            'player_results': player_results,
             'pots': list(showdown_info.get('pots', [])),
         }
 

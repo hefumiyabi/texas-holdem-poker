@@ -70,6 +70,7 @@ while t.game_stage != GameStage.FINISHED:
 check('边池：短码 AA 只赢主池 300', ps[0].chips == 300, ps[0].chips)
 check('边池：KK 赢边池 600', ps[1].chips == 1000 - 400 + 600, ps[1].chips)
 check('边池：筹码守恒', total(ps) == before)
+check('边池：结算净额守恒', sum(row['net'] for row in t.last_hand_result['player_results']) == 0)
 
 # 3. 平分底池（含零头）
 t, ps = make([1000, 1000, 1000], sb=5, bb=10)
@@ -81,6 +82,7 @@ act(t, A.FOLD)           # P2 大盲弃牌（底池 35+35+10=80）
 while t.game_stage != GameStage.FINISHED:
     act(t, A.CHECK)
 check('平分底池', ps[0].chips == 1005 and ps[1].chips == 1005, (ps[0].chips, ps[1].chips))
+check('平分：每位参与者都有结算行', len(t.last_hand_result['player_results']) == 3)
 t, ps = make([1000, 1000, 1000], sb=5, bb=10)
 with quiet(): t.start_new_hand()
 rig(t, ['As Kd', 'Ah Kc', '2c 3d'], 'Qs Jh Td 7c 8s')
