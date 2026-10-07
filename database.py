@@ -407,6 +407,29 @@ class PokerDatabase:
                 conn.commit()
                 return cursor.rowcount > 0
 
+    def set_player_disconnected_at(self, table_id: str, player_id: str,
+                                   disconnected_at: Optional[float]) -> bool:
+        """Update connection presence without changing gameplay status."""
+        with self.lock:
+            with self.get_connection() as conn:
+                cursor = conn.execute('''
+                    UPDATE table_players SET disconnected_at = ?
+                    WHERE table_id = ? AND player_id = ?
+                ''', (disconnected_at, table_id, player_id))
+                conn.commit()
+                return cursor.rowcount > 0
+
+    def touch_table_activity(self, table_id: str, now: Optional[float] = None) -> bool:
+        """Lightweight presence heartbeat; deliberately performs no game work."""
+        with self.lock:
+            with self.get_connection() as conn:
+                cursor = conn.execute(
+                    'UPDATE tables SET last_activity = ? WHERE id = ? AND is_active = 1',
+                    (time.time() if now is None else now, table_id),
+                )
+                conn.commit()
+                return cursor.rowcount > 0
+
     def create_guest_session(self, token_hash: str, player_id: str, expires_at: float) -> None:
         now = time.time()
         with self.lock:
@@ -595,23 +618,29 @@ class PokerDatabase:
             with self.get_connection() as conn:
                 conn.execute('''
                     UPDATE tables SET game_stage = ?, hand_number = ?, pot = ?,
-                        current_bet = ?, community_cards = ?, last_activity = ?
+                        current_bet = ?, community_cards = ?,
+                        tournament_elapsed_seconds = ?, tournament_clock_anchor = ?,
+                        blind_level = ?, clock_paused = ?, last_activity = ?
                     WHERE id = ?
                 ''', (
                     table.game_stage.value, table.hand_number, table.pot,
                     table.current_bet,
                     json.dumps([card.to_dict() for card in table.community_cards]),
+                    table.effective_tournament_seconds() if table.clock_paused else table.tournament_elapsed_seconds,
+                    table.tournament_clock_anchor,
+                    table.blind_level,
+                    int(table.clock_paused),
                     time.time(), table.id,
                 ))
                 for player in table.players:
                     conn.execute('''
                         UPDATE table_players SET chips = ?, current_bet = ?, status = ?,
-                            hole_cards = ?, has_acted = ?
+                            hole_cards = ?, has_acted = ?, disconnected_at = ?
                         WHERE table_id = ? AND player_id = ?
                     ''', (
                         player.chips, player.current_bet, player.status.value,
                         json.dumps([card.to_dict() for card in player.hole_cards]),
-                        int(player.has_acted), table.id, player.id,
+                        int(player.has_acted), getattr(player, 'disconnected_at', None), table.id, player.id,
                     ))
                 conn.commit()
     

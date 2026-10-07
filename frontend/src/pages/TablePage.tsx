@@ -15,7 +15,7 @@ import { TableHeader } from '../components/TableHeader'
 import { formatActionDescription, formatActionError } from '../currency'
 import { translate } from '../i18n'
 import type { Preferences } from '../preferences'
-import { createPokerSocket } from '../socket'
+import { createPokerSocket, TABLE_HEARTBEAT_MS } from '../socket'
 import { initialTableState, tableReducer } from '../state/tableReducer'
 import type { ActionErrorPayload, ResolvedActionPayload } from '../currency'
 import type { BotPersona, RoomSnapshot } from '../types'
@@ -56,7 +56,8 @@ export function TablePage({ preferences, onPreferences }: { preferences: Prefere
     connection.on('error', (payload: ActionErrorPayload) => dispatch({ type: 'error', message: formatActionError(payload, language) }))
     connection.on('room:left', () => navigate('/')); connection.on('room:dissolved', () => navigate('/'))
     connection.connect()
-    return () => { if (actionTimer.current !== null) window.clearTimeout(actionTimer.current); connection.removeAllListeners(); connection.disconnect() }
+    const heartbeat = window.setInterval(() => connection.connected && connection.emit('room:heartbeat'), TABLE_HEARTBEAT_MS)
+    return () => { window.clearInterval(heartbeat); if (actionTimer.current !== null) window.clearTimeout(actionTimer.current); connection.removeAllListeners(); connection.disconnect() }
   }, [code, language, navigate])
   const snapshot = state.snapshot; const table = snapshot?.table; const viewer = snapshot ? table?.players.find((player) => player.id === snapshot.viewer_id) : undefined
   const ordered = useMemo(() => {

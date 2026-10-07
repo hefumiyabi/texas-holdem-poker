@@ -299,6 +299,7 @@ class V1SocketTestCase(unittest.TestCase):
         _client, hero, room = self.create_challenge()
         table = self.app_module.tables[room["id"]]
         table.hand_number = 10
+        table.blind_level = 2
         table.game_stage = self.app_module.GameStage.FINISHED
         table.get_player(hero["id"]).chips = 4321
         self.app_module.db.save_table_progress(table)
@@ -308,7 +309,7 @@ class V1SocketTestCase(unittest.TestCase):
 
         self.assertEqual(restored.hand_number, 10)
         self.assertEqual(restored.get_player(hero["id"]).chips, 4321)
-        self.assertEqual((restored.small_blind, restored.big_blind), (20, 40))
+        self.assertEqual((restored.small_blind, restored.big_blind), (15, 30))
 
     def test_disconnect_cleanup_folds_current_player_and_finishes_heads_up_hand(self):
         host_client, host, room = self.create_room()
@@ -321,7 +322,9 @@ class V1SocketTestCase(unittest.TestCase):
         table = self.app_module.tables[room["id"]]
         self.assertEqual(table.get_current_player().id, host["id"])
 
-        self.app_module._finalize_v1_disconnect(host["id"], room["id"])
+        table.get_player(host["id"]).disconnected_at = 1000
+        self.app_module.db.set_player_disconnected_at(room["id"], host["id"], 1000)
+        self.app_module._finalize_v1_disconnect(host["id"], room["id"], now=4600)
 
         self.assertEqual(table.game_stage, self.app_module.GameStage.FINISHED)
         self.assertEqual(table.last_hand_result["win_reason"], "others_folded")
@@ -679,8 +682,11 @@ class V1SocketTestCase(unittest.TestCase):
         guest_client, guest = self.guest_client("Guest")
         guest_client.post(f"/api/v1/rooms/{room['join_code']}/join", json={"position": 1})
         table_id = room["id"]
+        table = self.app_module._table_from_record(self.app_module.db.get_table(table_id))
+        table.get_player(host["id"]).disconnected_at = 1000
+        self.app_module.db.set_player_disconnected_at(table_id, host["id"], 1000)
 
-        self.app_module._finalize_v1_disconnect(host["id"], table_id)
+        self.app_module._finalize_v1_disconnect(host["id"], table_id, now=4600)
         record = self.app_module.db.get_table(table_id)
 
         self.assertIsNotNone(record)
@@ -712,12 +718,104 @@ class V1SocketTestCase(unittest.TestCase):
         )
         guest_socket.emit("room:join", {"join_code": room["join_code"]})
         guest_socket.get_received()
+        table = self.app_module.tables[room["id"]]
+        table.get_player(host["id"]).disconnected_at = 1000
+        self.app_module.db.set_player_disconnected_at(room["id"], host["id"], 1000)
 
-        self.app_module._finalize_v1_disconnect(host["id"], room["id"])
+        self.app_module._finalize_v1_disconnect(host["id"], room["id"], now=4600)
 
         snapshots = self.events_named(guest_socket, "room:snapshot")
         self.assertTrue(snapshots)
         self.assertEqual(snapshots[-1]["room"]["host"]["id"], guest["id"])
+
+    def test_connected_idle_heartbeat_keeps_membership(self):
+        host_client, host, room = self.create_room()
+        socket_client = self.app_module.socketio.test_client(self.app_module.app, flask_test_client=host_client)
+        socket_client.emit("room:join", {"join_code": room["join_code"]})
+        socket_client.get_received()
+
+        with mock.patch.object(self.app_module.time, "time", return_value=10_000):
+            socket_client.emit("room:heartbeat", {})
+
+        self.assertIn(host["id"], [row["player_id"] for row in self.app_module.db.get_table_players(room["id"])])
+        self.assertTrue(self.events_named(socket_client, "connection:status")[-1]["heartbeat"])
+
+    def test_reconnect_at_3599_seconds_restores_the_same_seat(self):
+        host_client, host, room = self.create_room()
+        socket_client = self.app_module.socketio.test_client(self.app_module.app, flask_test_client=host_client)
+        socket_client.emit("room:join", {"join_code": room["join_code"]})
+        socket_client.get_received()
+        original_position = self.app_module.db.get_table_players(room["id"])[0]["position"]
+        with mock.patch.object(self.app_module.time, "time", return_value=1000):
+            socket_client.disconnect()
+
+        reconnected = self.app_module.socketio.test_client(self.app_module.app, flask_test_client=host_client)
+        with mock.patch.object(self.app_module.time, "time", return_value=4599):
+            reconnected.emit("room:join", {"join_code": room["join_code"]})
+
+        self.assertTrue(self.events_named(reconnected, "room:snapshot"))
+        row = next(row for row in self.app_module.db.get_table_players(room["id"]) if row["player_id"] == host["id"])
+        self.assertEqual(row["position"], original_position)
+        self.assertIsNone(row["disconnected_at"])
+
+    def test_disconnected_seat_expires_at_3600_seconds(self):
+        host_client, host, room = self.create_room()
+        guest_client, _guest = self.guest_client("Guest")
+        guest_client.post(f"/api/v1/rooms/{room['join_code']}/join", json={"position": 1})
+        socket_client = self.app_module.socketio.test_client(self.app_module.app, flask_test_client=host_client)
+        socket_client.emit("room:join", {"join_code": room["join_code"]})
+        socket_client.get_received()
+        with mock.patch.object(self.app_module.time, "time", return_value=1000):
+            socket_client.disconnect()
+
+        self.app_module._expire_disconnected_players(room["id"], now=4600)
+
+        self.assertNotIn(host["id"], [row["player_id"] for row in self.app_module.db.get_table_players(room["id"])])
+
+    def test_current_disconnect_pauses_clock_without_changing_gameplay_status(self):
+        host_client, host, room = self.create_room()
+        guest_client, _guest = self.guest_client("Guest")
+        guest_client.post(f"/api/v1/rooms/{room['join_code']}/join", json={"position": 1})
+        socket_client = self.app_module.socketio.test_client(self.app_module.app, flask_test_client=host_client)
+        socket_client.emit("room:join", {"join_code": room["join_code"]})
+        socket_client.get_received(); socket_client.emit("hand:start", {}); socket_client.get_received()
+        table = self.app_module.tables[room["id"]]
+        self.assertEqual(table.get_current_player().id, host["id"])
+        self.assertFalse(table.clock_paused)
+
+        with mock.patch.object(self.app_module.time, "time", return_value=1000):
+            socket_client.disconnect()
+
+        self.assertTrue(table.clock_paused)
+        self.assertEqual(table.get_player(host["id"]).status, self.app_module.PlayerStatus.PLAYING)
+        self.assertEqual(table.get_player(host["id"]).disconnected_at, 1000)
+
+    def test_non_current_disconnect_keeps_seat_then_pauses_when_turn_reaches_it(self):
+        host_client, host, room = self.create_room()
+        guest_client, guest = self.guest_client("Guest")
+        third_client, _third = self.guest_client("Third")
+        guest_client.post(f"/api/v1/rooms/{room['join_code']}/join", json={"position": 1})
+        third_client.post(f"/api/v1/rooms/{room['join_code']}/join", json={"position": 2})
+        host_socket = self.app_module.socketio.test_client(self.app_module.app, flask_test_client=host_client)
+        guest_socket = self.app_module.socketio.test_client(self.app_module.app, flask_test_client=guest_client)
+        for client in (host_socket, guest_socket):
+            client.emit("room:join", {"join_code": room["join_code"]}); client.get_received()
+        host_socket.emit("hand:start", {}); host_socket.get_received(); guest_socket.get_received()
+        table = self.app_module.tables[room["id"]]
+        self.assertEqual(table.get_current_player().id, host["id"])
+        positions = {row["player_id"]: row["position"] for row in self.app_module.db.get_table_players(room["id"])}
+
+        with mock.patch.object(self.app_module.time, "time", return_value=1000):
+            guest_socket.disconnect()
+        self.assertFalse(table.clock_paused)
+        self.assertEqual(table.get_player(guest["id"]).status, self.app_module.PlayerStatus.PLAYING)
+        with mock.patch.object(self.app_module.time, "time", return_value=1001):
+            host_socket.emit("player:act", {"action": "call", "turn_token": table.get_turn_token()})
+
+        self.assertEqual(table.get_current_player().id, guest["id"])
+        self.assertTrue(table.clock_paused)
+        current_positions = {row["player_id"]: row["position"] for row in self.app_module.db.get_table_players(room["id"])}
+        self.assertEqual(current_positions, positions)
 
 
 if __name__ == "__main__":

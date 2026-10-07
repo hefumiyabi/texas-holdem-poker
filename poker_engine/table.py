@@ -48,7 +48,11 @@ class Table:
         self.big_blind = big_blind
         self.base_small_blind = small_blind
         self.base_big_blind = big_blind
-        self.blind_increase_interval = 5
+        self.blind_level_seconds = 600
+        self.tournament_elapsed_seconds = 0.0
+        self.tournament_clock_anchor: Optional[float] = None
+        self.blind_level = 1
+        self.clock_paused = True
         self.max_players = max_players
         self.initial_chips = initial_chips
         
@@ -96,6 +100,51 @@ class Table:
         if not current:
             return None
         return f"{self.hand_number}:{self.game_stage.value}:{current.id}:{self.action_revision}"
+
+    def effective_tournament_seconds(self, now: Optional[float] = None) -> float:
+        current_time = time.time() if now is None else now
+        elapsed = float(self.tournament_elapsed_seconds)
+        if not self.clock_paused and self.tournament_clock_anchor is not None:
+            elapsed += max(0.0, current_time - self.tournament_clock_anchor)
+        return elapsed
+
+    def resume_tournament_clock(self, now: Optional[float] = None) -> bool:
+        if not self.clock_paused:
+            return False
+        self.tournament_clock_anchor = time.time() if now is None else now
+        self.clock_paused = False
+        return True
+
+    def pause_tournament_clock(self, now: Optional[float] = None) -> bool:
+        if self.clock_paused:
+            return False
+        current_time = time.time() if now is None else now
+        self.tournament_elapsed_seconds = self.effective_tournament_seconds(current_time)
+        self.tournament_clock_anchor = None
+        self.clock_paused = True
+        return True
+
+    @staticmethod
+    def _half_up_ratio(value: int, numerator: int, denominator: int = 2) -> int:
+        return max(1, (value * numerator + denominator // 2) // denominator)
+
+    def _blinds_for_level(self, level: int) -> Tuple[int, int]:
+        numerators = (2, 3, 4, 6, 8, 10, 15)
+        index = max(0, level - 1)
+        numerator = numerators[index % len(numerators)] * (10 ** (index // len(numerators)))
+        return (
+            self._half_up_ratio(self.base_small_blind, numerator),
+            self._half_up_ratio(self.base_big_blind, numerator),
+        )
+
+    def apply_blind_level_for_next_hand(self, now: Optional[float] = None) -> int:
+        elapsed = self.effective_tournament_seconds(now)
+        level = int(elapsed // max(1, self.blind_level_seconds)) + 1
+        self.blind_level = max(1, level)
+        self.small_blind, self.big_blind = self._blinds_for_level(self.blind_level)
+        if self.game_mode == "blinds":
+            self.min_raise = self.big_blind
+        return self.blind_level
     
     def add_player(self, player: Player) -> bool:
         """添加玩家到牌桌"""
@@ -153,22 +202,15 @@ class Table:
             return self.hand_players
         return [p for p in self._seat_order() if len(p.hole_cards) == 2]
     
-    def start_new_hand(self) -> bool:
+    def start_new_hand(self, now: Optional[float] = None) -> bool:
         """开始新一手牌：只有在线且有筹码的玩家发牌，筹码为 0 的玩家转为观战（BROKE）"""
         ordered = self._seat_order()
         active_players = [p for p in ordered if p.status != PlayerStatus.DISCONNECTED and p.chips > 0]
         if len(active_players) < 2:
             return False
 
-        # Tournament-style blind clock: advance only at a hand boundary so every
-        # player in the current hand always sees one stable betting structure.
-        next_hand_number = self.hand_number + 1
-        blind_level_index = (next_hand_number - 1) // self.blind_increase_interval
-        blind_multiplier = 2 ** blind_level_index
-        self.small_blind = self.base_small_blind * blind_multiplier
-        self.big_blind = self.base_big_blind * blind_multiplier
-        if self.game_mode == "blinds":
-            self.min_raise = self.big_blind
+        # Time-derived blind changes only become active at a hand boundary.
+        self.apply_blind_level_for_next_hand(now)
 
         self._advice_cache.clear()
         self.last_hand_result = None
@@ -951,6 +993,15 @@ class Table:
     def get_table_state(self, player_id: Optional[str] = None) -> Dict:
         """获取牌桌状态"""
         current_player = self.get_current_player()
+        player_states = []
+        for player in self.players:
+            state = player.to_dict(include_hole_cards=(player.id == player_id))
+            state['connected'] = getattr(player, 'disconnected_at', None) is None
+            player_states.append(state)
+        now = time.time()
+        elapsed = self.effective_tournament_seconds(now)
+        seconds_remaining = max(0, int(self.blind_level * self.blind_level_seconds - elapsed))
+        next_small, next_big = self._blinds_for_level(self.blind_level + 1)
         return {
             'id': self.id,
             'title': self.title,
@@ -961,8 +1012,11 @@ class Table:
             'ante_percentage': self.ante_percentage,
             'game_stage': self.game_stage.value,
             'hand_number': self.hand_number,
-            'blind_level': ((max(1, self.hand_number) - 1) // self.blind_increase_interval) + 1,
-            'hands_until_blind_increase': self.blind_increase_interval - ((max(1, self.hand_number) - 1) % self.blind_increase_interval),
+            'blind_level': self.blind_level,
+            'blind_seconds_remaining': seconds_remaining,
+            'next_small_blind': next_small,
+            'next_big_blind': next_big,
+            'tournament_paused': self.clock_paused,
             'community_cards': [card.to_dict() for card in self.community_cards],
             'pot': self.pot,
             'current_bet': self.current_bet,
@@ -971,7 +1025,7 @@ class Table:
             'action_revision': self.action_revision,
             'min_bet': self.min_bet(),
             'min_raise_to': self.min_raise_to(),
-            'players': [p.to_dict(include_hole_cards=(p.id == player_id)) for p in self.players],
+            'players': player_states,
             'can_start': (len([p for p in self.players if p.chips > 0 and p.status != PlayerStatus.DISCONNECTED]) >= 2
                           and self.game_stage == GameStage.WAITING),
             'created_at': self.created_at,

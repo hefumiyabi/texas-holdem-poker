@@ -39,6 +39,7 @@ export interface Player {
   nickname: string
   chips: number
   is_bot: boolean
+  connected?: boolean
   status: string
   current_bet: number
   total_bet: number
@@ -80,6 +81,10 @@ export interface TableInfo {
   hand_number?: number
   blind_level?: number
   hands_until_blind_increase?: number
+  blind_seconds_remaining?: number
+  next_small_blind?: number
+  next_big_blind?: number
+  tournament_paused?: boolean
   community_cards: Card[]
   pot: number
   current_bet?: number

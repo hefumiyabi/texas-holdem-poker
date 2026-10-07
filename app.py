@@ -130,6 +130,33 @@ def _lineup_is_editable(table: Table) -> bool:
     return table.game_stage in (GameStage.WAITING, GameStage.FINISHED)
 
 
+def _persist_tournament_runtime(table: Table) -> None:
+    db.update_tournament_runtime(
+        table.id,
+        elapsed_seconds=table.tournament_elapsed_seconds,
+        clock_anchor=table.tournament_clock_anchor,
+        blind_level=table.blind_level,
+        clock_paused=table.clock_paused,
+    )
+
+
+def _sync_tournament_clock(table_id: str, now: Optional[float] = None) -> bool:
+    """Pause only outside active play or while the current seat is disconnected."""
+    table = tables.get(table_id)
+    if not table:
+        return False
+    current = table.get_current_player()
+    should_run = (
+        table.game_stage in ACTIVE_HAND_STAGES
+        and current is not None
+        and getattr(current, 'disconnected_at', None) is None
+    )
+    changed = table.resume_tournament_clock(now) if should_run else table.pause_tournament_clock(now)
+    if changed:
+        _persist_tournament_runtime(table)
+    return changed
+
+
 def _with_table_state_lock(function):
     def locked(table_id, *args, **kwargs):
         with _get_table_state_lock(table_id):
@@ -143,6 +170,7 @@ def _sync_turn_clock(table_id: str):
     if not table:
         return
     with _get_table_state_lock(table_id):
+        _sync_tournament_clock(table_id)
         current = table.get_current_player()
         if table.game_stage not in ACTIVE_HAND_STAGES or not current:
             table.turn_clock_key = None
@@ -614,10 +642,8 @@ def _table_from_record(record: Dict) -> Table:
     table.blind_level = int(record.get('blind_level') or 1)
     table.clock_paused = bool(record.get('clock_paused', 1))
     table.hand_number = int(record.get('hand_number') or 0)
-    if table.hand_number:
-        multiplier = 2 ** ((table.hand_number - 1) // table.blind_increase_interval)
-        table.small_blind = table.base_small_blind * multiplier
-        table.big_blind = table.base_big_blind * multiplier
+    if table.blind_level:
+        table.small_blind, table.big_blind = table._blinds_for_level(table.blind_level)
         table.min_raise = table.big_blind
         table.last_raise_size = table.big_blind
     if record.get('game_stage') in (GameStage.WAITING.value, GameStage.FINISHED.value):
@@ -1401,17 +1427,17 @@ def handle_disconnect(_reason=None):
 
         v1_session = v1_socket_sessions.pop(session_id, None)
         if v1_session and v1_session.get('table_id'):
-            table = tables.get(v1_session['table_id'])
-            player = table.get_player(v1_session['player_id']) if table else None
-            if player and player.status in (PlayerStatus.PLAYING, PlayerStatus.WAITING):
-                player.status = PlayerStatus.DISCONNECTED
-                _emit_v1_snapshots(v1_session['table_id'])
-            if not app.config.get('TESTING'):
-                socketio.start_background_task(
-                    _schedule_v1_disconnect_cleanup,
-                    v1_session['player_id'],
-                    v1_session['table_id'],
-                )
+            table_id = v1_session['table_id']
+            table = tables.get(table_id)
+            with _get_table_state_lock(table_id):
+                player = table.get_player(v1_session['player_id']) if table else None
+                if player:
+                    disconnected_at = time.time()
+                    player.disconnected_at = disconnected_at
+                    db.set_player_disconnected_at(table_id, player.id, disconnected_at)
+                    _sync_tournament_clock(table_id, disconnected_at)
+            if player:
+                _emit_v1_snapshots(table_id)
         
         if session_id in player_sessions:
             player_info = player_sessions[session_id]
@@ -1498,17 +1524,8 @@ def _v1_error(code: str, message: str, **details):
     emit('error', {'code': code, 'message': message, **details})
 
 
-def _schedule_v1_disconnect_cleanup(player_id: str, table_id: str):
-    time.sleep(30)
-    if any(
-        session.get('player_id') == player_id and session.get('table_id') == table_id
-        for session in v1_socket_sessions.values()
-    ):
-        return
-    _finalize_v1_disconnect(player_id, table_id)
-
-
-def _finalize_v1_disconnect(player_id: str, table_id: str):
+def _finalize_v1_disconnect(player_id: str, table_id: str, *, explicit: bool = False,
+                            now: Optional[float] = None):
     record = db.get_table(table_id)
     if not record:
         return
@@ -1516,6 +1533,12 @@ def _finalize_v1_disconnect(player_id: str, table_id: str):
     if table:
         with _get_table_state_lock(table_id):
             player = table.get_player(player_id)
+            current_time = time.time() if now is None else now
+            disconnected_at = getattr(player, 'disconnected_at', None) if player else None
+            if not explicit and (
+                disconnected_at is None or current_time - disconnected_at < 3600
+            ):
+                return
             if player and table.game_stage in ACTIVE_HAND_STAGES and player in table._participants():
                 pending_v1_disconnects.add((table_id, player_id))
                 if player.status == PlayerStatus.PLAYING:
@@ -1555,6 +1578,22 @@ def _finalize_v1_disconnect(player_id: str, table_id: str):
     _emit_v1_snapshots(table_id)
 
 
+def _expire_disconnected_players(table_id: str, now: Optional[float] = None) -> None:
+    """Lazily expire one-hour seats on normal room activity; never start sleepers."""
+    table = tables.get(table_id)
+    if not table:
+        return
+    current_time = time.time() if now is None else now
+    expired = [
+        player.id for player in list(table.players)
+        if not player.is_bot
+        and getattr(player, 'disconnected_at', None) is not None
+        and current_time - player.disconnected_at >= 3600
+    ]
+    for player_id in expired:
+        _finalize_v1_disconnect(player_id, table_id, now=current_time)
+
+
 def _v1_session() -> Optional[Dict]:
     guest = _authenticated_guest()
     if not guest:
@@ -1585,6 +1624,11 @@ def _v1_room_context(require_host: bool = False):
     if not table_id:
         _v1_error('room_membership_required', '请先加入房间')
         return None
+    record = db.get_table(table_id)
+    if not record:
+        _v1_error('room_not_found', '房间不存在')
+        return None
+    _expire_disconnected_players(table_id)
     record = db.get_table(table_id)
     if not record:
         _v1_error('room_not_found', '房间不存在')
@@ -1665,16 +1709,22 @@ def handle_v1_room_join(data):
     if not record:
         _v1_error('room_not_found', '房间不存在')
         return
-    if not any(row['player_id'] == session['player_id'] for row in db.get_table_players(record['id'])):
+    table = _table_from_record(record)
+    _expire_disconnected_players(record['id'])
+    record = db.get_table_by_join_code(join_code)
+    if not record or not any(row['player_id'] == session['player_id'] for row in db.get_table_players(record['id'])):
         _v1_error('room_membership_required', '请先通过房间入口加入')
         return
-    table = _table_from_record(record)
     player = table.get_player(session['player_id'])
-    if player and player.status == PlayerStatus.DISCONNECTED:
-        player.status = PlayerStatus.WAITING if table.game_stage == GameStage.WAITING else PlayerStatus.PLAYING
+    was_disconnected = bool(player and getattr(player, 'disconnected_at', None) is not None)
+    if player:
+        player.disconnected_at = None
+        db.set_player_disconnected_at(record['id'], player.id, None)
+        with _get_table_state_lock(record['id']):
+            _sync_tournament_clock(record['id'])
     session.update({'table_id': record['id'], 'join_code': record['join_code']})
     join_room(record['id'])
-    emit('connection:status', {'authenticated': True, 'reconnected': bool(player)})
+    emit('connection:status', {'authenticated': True, 'reconnected': was_disconnected})
     _emit_v1_snapshots(record['id'])
 
 
@@ -1687,7 +1737,22 @@ def handle_v1_room_leave(_data=None):
     leave_room(record['id'])
     session.update({'table_id': None, 'join_code': None})
     emit('room:left', {'join_code': record['join_code']})
-    _finalize_v1_disconnect(session['player_id'], record['id'])
+    _finalize_v1_disconnect(session['player_id'], record['id'], explicit=True)
+
+
+@socketio.on('room:heartbeat')
+def handle_v1_room_heartbeat(_data=None):
+    session = _v1_session()
+    if not session or not session.get('table_id'):
+        return
+    table_id = session['table_id']
+    _expire_disconnected_players(table_id)
+    if any(row['player_id'] == session['player_id'] for row in db.get_table_players(table_id)):
+        db.touch_table_activity(table_id)
+        table = tables.get(table_id)
+        if table:
+            table.last_activity = time.time()
+        emit('connection:status', {'authenticated': True, 'heartbeat': True})
 
 
 @socketio.on('room:dissolve')
