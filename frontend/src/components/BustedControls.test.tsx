@@ -31,9 +31,18 @@ describe('BustedControls', () => {
   })
 
   it('lets a spectator re-enter between hands when a rebuy remains', () => {
-    render(<BustedControls language="zh" player={{ ...bustedPlayer, tournament_status: 'spectating', can_rebuy: true }} initialChips={1000} onRebuy={() => {}} onSpectate={() => {}} onLeave={() => {}}/>)
+    const onWatchNext = vi.fn()
+    render(<BustedControls language="zh" player={{ ...bustedPlayer, tournament_status: 'spectating', can_rebuy: true }} initialChips={1000} onRebuy={() => {}} onSpectate={() => {}} onWatchNext={onWatchNext} onLeave={() => {}}/>)
     expect(screen.getByText('正在观战')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '重新买入 ¥1,000' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '继续观看' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '观看下一局' }))
+    expect(onWatchNext).toHaveBeenCalledOnce()
+  })
+
+  it('keeps the initial continue-watching choice for a newly busted player', () => {
+    render(<BustedControls language="zh" player={bustedPlayer} initialChips={1000} onRebuy={() => {}} onSpectate={() => {}} onWatchNext={() => {}} onLeave={() => {}}/>)
+    expect(screen.getByRole('button', { name: '继续观看' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '观看下一局' })).not.toBeInTheDocument()
   })
 })

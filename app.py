@@ -2083,11 +2083,17 @@ def handle_v1_round_vote(_data=None):
         votes = next_round_votes.setdefault(record_id, set())
         votes.add(session['player_id'])
         human_ids = {player.id for player in eligible if not player.is_bot}
+        voter = table.get_player(session['player_id'])
         socketio.emit('round:vote', {
             'votes': len(votes & human_ids),
             'required': len(human_ids),
         }, room=record_id)
-        if human_ids and human_ids.issubset(votes):
+        bot_only_spectator_start = (
+            not human_ids
+            and voter is not None
+            and voter.tournament_status == 'spectating'
+        )
+        if (human_ids and human_ids.issubset(votes)) or bot_only_spectator_start:
             if not start_next_round(record_id):
                 _v1_error('next_hand_failed', '下一局启动失败')
                 return

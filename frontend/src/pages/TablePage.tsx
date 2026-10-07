@@ -95,7 +95,7 @@ export function TablePage({ preferences, onPreferences }: { preferences: Prefere
       {snapshot.analysis && <GtoCoachCard language={language} analysis={snapshot.analysis}/>}
       {snapshot.last_hand_result && table.game_stage === 'finished' && <HandResultCard language={language} currency={currency} result={snapshot.last_hand_result} viewerId={snapshot.viewer_id}/>}
     </section>
-    {viewer.chips <= 0 && betweenHands ? <BustedControls language={language} currency={currency} player={viewer} initialChips={snapshot.room.initial_chips || 1000} onRebuy={() => socket?.emit('player:rebuy')} onSpectate={() => socket?.emit('player:spectate')} onLeave={leave}/>
+    {viewer.chips <= 0 && betweenHands ? <BustedControls language={language} currency={currency} player={viewer} initialChips={snapshot.room.initial_chips || 1000} onRebuy={() => socket?.emit('player:rebuy')} onSpectate={() => socket?.emit('player:spectate')} onWatchNext={viewer.tournament_status === 'spectating' && table.game_stage === 'finished' ? () => socket?.emit('round:vote') : undefined} onLeave={leave}/>
       : table.game_stage === 'waiting' ? <div className="host-controls">
       {snapshot.room.is_host && <><button onClick={() => setLineup(true)}><Plus/>{translate(language, 'lineup')}</button><button className="gold-button" disabled={!table.can_start} onClick={() => socket?.emit('hand:start')}><Spade weight="fill"/>{translate(language, 'startHand')}</button></>}
       {!snapshot.room.is_host && <p>{translate(language, 'waiting')}</p>}

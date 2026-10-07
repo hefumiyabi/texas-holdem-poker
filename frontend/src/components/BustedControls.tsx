@@ -10,10 +10,11 @@ interface Props {
   initialChips: number
   onRebuy: () => void
   onSpectate: () => void
+  onWatchNext?: () => void
   onLeave: () => void
 }
 
-export function BustedControls({ language, currency, player, initialChips, onRebuy, onSpectate, onLeave }: Props) {
+export function BustedControls({ language, currency, player, initialChips, onRebuy, onSpectate, onWatchNext, onLeave }: Props) {
   const spectating = player.tournament_status === 'spectating'
   const remaining = player.rebuys_remaining
   const allowance = remaining === 'unlimited'
@@ -31,6 +32,7 @@ export function BustedControls({ language, currency, player, initialChips, onReb
     <div className="busted-actions">
       {player.can_rebuy && <button className="gold-button" onClick={onRebuy} aria-label={rebuyLabel}><Stack />{rebuyLabel}</button>}
       {!spectating && <button onClick={onSpectate}><Eye />{translate(language, 'keepWatching')}</button>}
+      {spectating && onWatchNext && <button onClick={onWatchNext}><Eye />{translate(language, 'watchNextHand')}</button>}
       <button onClick={onLeave}><SignOut />{translate(language, 'exitTable')}</button>
     </div>
   </section>

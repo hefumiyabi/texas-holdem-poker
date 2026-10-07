@@ -396,6 +396,50 @@ class V1SocketTestCase(unittest.TestCase):
         self.assertEqual(table.hand_number, 2)
         self.assertEqual(table.game_stage, self.app_module.GameStage.PRE_FLOP)
 
+    def test_spectator_can_start_next_bot_only_hand(self):
+        host_client, host, room = self.create_room(rebuy_limit=1)
+        socket_client = self.app_module.socketio.test_client(
+            self.app_module.app, flask_test_client=host_client
+        )
+        socket_client.emit("room:join", {"join_code": room["join_code"]})
+        socket_client.get_received()
+        for persona in ("balanced", "tight"):
+            socket_client.emit("bot:add", {"level": "beginner", "persona": persona})
+            socket_client.get_received()
+        table, _player = self.make_player_broke(room, host["id"])
+        table.hand_number = 1
+        socket_client.emit("player:spectate", {})
+        socket_client.get_received()
+
+        with mock.patch.object(self.app_module.socketio, "start_background_task"):
+            socket_client.emit("round:vote", {})
+
+        self.assertEqual(table.hand_number, 2)
+        self.assertEqual(table.game_stage, self.app_module.GameStage.PRE_FLOP)
+        self.assertTrue(self.events_named(socket_client, "hand:started"))
+
+    def test_spectator_vote_does_not_bypass_funded_human_vote(self):
+        host_client, host, room = self.create_room(rebuy_limit=1)
+        guest_client, _guest = self.guest_client("Funded Guest")
+        joined = guest_client.post(f"/api/v1/rooms/{room['join_code']}/join", json={"position": 1})
+        self.assertEqual(joined.status_code, 200)
+        socket_client = self.app_module.socketio.test_client(
+            self.app_module.app, flask_test_client=host_client
+        )
+        socket_client.emit("room:join", {"join_code": room["join_code"]})
+        socket_client.get_received()
+        socket_client.emit("bot:add", {"level": "beginner", "persona": "balanced"})
+        socket_client.get_received()
+        table, _player = self.make_player_broke(room, host["id"])
+        table.hand_number = 1
+        socket_client.emit("player:spectate", {})
+        socket_client.get_received()
+
+        socket_client.emit("round:vote", {})
+
+        self.assertEqual(table.hand_number, 1)
+        self.assertEqual(table.game_stage, self.app_module.GameStage.FINISHED)
+
     def test_round_vote_with_one_player_preserves_finished_state(self):
         host_client, _, room = self.create_room()
         socket_client = self.app_module.socketio.test_client(
