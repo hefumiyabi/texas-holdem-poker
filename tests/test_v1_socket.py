@@ -39,11 +39,26 @@ class V1SocketTestCase(unittest.TestCase):
         self.assertEqual(response.status_code, 201)
         return client, response.get_json()["player"]
 
-    def create_room(self, nickname="Host"):
+    def create_room(self, nickname="Host", **overrides):
         client, player = self.guest_client(nickname)
-        response = client.post("/api/v1/rooms", json={"title": "Friends", "max_players": 6})
+        payload = {"title": "Friends", "max_players": 6, **overrides}
+        response = client.post("/api/v1/rooms", json=payload)
         self.assertEqual(response.status_code, 201)
         return client, player, response.get_json()["room"]
+
+    def make_player_broke(self, room, player_id, *, stage="finished"):
+        table = self.app_module.tables[room["id"]]
+        player = table.get_player(player_id)
+        player.chips = 0
+        player.status = self.app_module.PlayerStatus.BROKE
+        player.tournament_status = "busted"
+        table.game_stage = self.app_module.GameStage(stage)
+        self.app_module.db.save_table_progress(table)
+        self.app_module.db.update_table_player_tournament_state(
+            room["id"], player_id, rebuys_used=player.rebuys_used,
+            tournament_status="busted", disconnected_at=None,
+        )
+        return table, player
 
     def create_challenge(self, nickname="Coach Hero"):
         client, player = self.guest_client(nickname)
@@ -160,6 +175,112 @@ class V1SocketTestCase(unittest.TestCase):
         errors = self.events_named(host_socket, "error")
 
         self.assertEqual(errors[-1]["code"], "vote_unavailable")
+
+    def test_human_rebuy_limits_restore_exactly_one_initial_stack(self):
+        cases = ((0, False), (1, True), (2, True), (3, True), ("unlimited", True))
+        for index, (limit, allowed) in enumerate(cases):
+            with self.subTest(limit=limit):
+                host_client, host, room = self.create_room(
+                    f"Host{index}", initial_chips=5000, rebuy_limit=limit,
+                )
+                socket_client = self.app_module.socketio.test_client(
+                    self.app_module.app, flask_test_client=host_client
+                )
+                socket_client.emit("room:join", {"join_code": room["join_code"]})
+                socket_client.get_received()
+                _table, player = self.make_player_broke(room, host["id"])
+
+                socket_client.emit("player:rebuy", {})
+
+                if allowed:
+                    snapshot = self.events_named(socket_client, "room:snapshot")[-1]
+                    own = next(item for item in snapshot["table"]["players"] if item["id"] == host["id"])
+                    self.assertEqual(own["chips"], 5000)
+                    self.assertEqual(own["rebuys_used"], 1)
+                    self.assertEqual(own["tournament_status"], "active")
+                else:
+                    self.assertEqual(self.events_named(socket_client, "error")[-1]["code"], "rebuy_exhausted")
+                    self.assertEqual(player.chips, 0)
+
+    def test_rebuy_rejects_active_hand_non_broke_human_and_bot(self):
+        host_client, host, room = self.create_room(rebuy_limit=3)
+        socket_client = self.app_module.socketio.test_client(
+            self.app_module.app, flask_test_client=host_client
+        )
+        socket_client.emit("room:join", {"join_code": room["join_code"]})
+        socket_client.get_received()
+
+        socket_client.emit("player:rebuy", {})
+        self.assertEqual(self.events_named(socket_client, "error")[-1]["code"], "rebuy_not_broke")
+
+        table, _player = self.make_player_broke(room, host["id"], stage="pre_flop")
+        socket_client.emit("player:rebuy", {})
+        self.assertEqual(self.events_named(socket_client, "error")[-1]["code"], "hand_in_progress")
+
+        bot = self.app_module.Bot("bot-no-rebuy", "Bot", 0)
+        bot.status = self.app_module.PlayerStatus.BROKE
+        bot.rebuys_used = 0
+        bot.tournament_status = "busted"
+        table.add_player_at_position(bot, 1)
+        self.app_module.players[bot.id] = bot
+        with self.app_module.db.get_connection() as conn:
+            now = self.app_module.time.time()
+            conn.execute(
+                "INSERT INTO users (id, nickname, chips, created_at, last_active) VALUES (?, ?, 0, ?, ?)",
+                (bot.id, bot.nickname, now, now),
+            )
+            conn.execute(
+                "INSERT INTO table_players (table_id, player_id, position, chips, is_bot, joined_at) VALUES (?, ?, 1, 0, 1, ?)",
+                (room["id"], bot.id, now),
+            )
+            conn.commit()
+        result = self.app_module.db.try_rebuy_player(room["id"], bot.id, 5000)
+        self.assertFalse(result["success"])
+        self.assertEqual(result["code"], "bot_rebuy_forbidden")
+
+    def test_two_concurrent_rebuys_award_only_one_stack(self):
+        _client, host, room = self.create_room(initial_chips=1000, rebuy_limit=1)
+        self.make_player_broke(room, host["id"])
+        barrier = threading.Barrier(3)
+        results = []
+
+        def rebuy():
+            barrier.wait()
+            results.append(self.app_module.db.try_rebuy_player(room["id"], host["id"], 1000))
+
+        threads = [threading.Thread(target=rebuy) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        barrier.wait()
+        for thread in threads:
+            thread.join(3)
+
+        self.assertEqual(sum(bool(result["success"]) for result in results), 1)
+        row = next(row for row in self.app_module.db.get_table_players(room["id"]) if row["player_id"] == host["id"])
+        self.assertEqual(row["chips"], 1000)
+        self.assertEqual(row["rebuys_used"], 1)
+
+    def test_broke_human_can_spectate_then_rebuy_between_hands(self):
+        host_client, host, room = self.create_room(initial_chips=1000, rebuy_limit=1)
+        socket_client = self.app_module.socketio.test_client(
+            self.app_module.app, flask_test_client=host_client
+        )
+        socket_client.emit("room:join", {"join_code": room["join_code"]})
+        socket_client.get_received()
+        self.make_player_broke(room, host["id"])
+
+        socket_client.emit("player:spectate", {})
+        spectating = self.events_named(socket_client, "room:snapshot")[-1]
+        own = next(item for item in spectating["table"]["players"] if item["id"] == host["id"])
+        self.assertEqual(own["tournament_status"], "spectating")
+        self.assertTrue(own["can_rebuy"])
+        self.assertEqual(own["rebuys_used"], 0)
+
+        socket_client.emit("player:rebuy", {})
+        active = self.events_named(socket_client, "room:snapshot")[-1]
+        own = next(item for item in active["table"]["players"] if item["id"] == host["id"])
+        self.assertEqual(own["tournament_status"], "active")
+        self.assertEqual(own["chips"], 1000)
 
     def test_challenge_snapshot_includes_cached_public_analysis_only_while_active(self):
         _client, hero, room = self.create_challenge()

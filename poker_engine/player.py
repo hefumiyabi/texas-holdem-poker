@@ -59,6 +59,11 @@ class Player:
         # 连接状态
         self.session_id: Optional[str] = None
         self.last_seen = None
+        self.disconnected_at = None
+
+        # 牌桌锦标赛状态仅属于当前房间，不影响全局游客资料。
+        self.rebuys_used = 0
+        self.tournament_status = "active"
     
     def reset_for_new_hand(self):
         """为新手牌重置玩家状态"""
@@ -205,4 +210,4 @@ class Player:
     def __repr__(self) -> str:
         """返回玩家的详细表示"""
         return (f"Player(id={self.id}, nickname={self.nickname}, "
-                f"chips={self.chips}, is_bot={self.is_bot})") 
+                f"chips={self.chips}, is_bot={self.is_bot})")

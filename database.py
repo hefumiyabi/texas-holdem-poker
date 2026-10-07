@@ -407,6 +407,84 @@ class PokerDatabase:
                 conn.commit()
                 return cursor.rowcount > 0
 
+    def try_rebuy_player(self, table_id: str, player_id: str, initial_chips: int) -> Dict:
+        """Atomically grant one table-scoped stack to an eligible human player."""
+        with self.lock:
+            with self.get_connection() as conn:
+                conn.execute('BEGIN IMMEDIATE')
+                row = conn.execute('''
+                    SELECT tp.*, t.game_stage, t.rebuy_limit, t.is_active
+                    FROM table_players tp
+                    JOIN tables t ON t.id = tp.table_id
+                    WHERE tp.table_id = ? AND tp.player_id = ?
+                ''', (table_id, player_id)).fetchone()
+                if not row or not row['is_active']:
+                    conn.rollback()
+                    return {'success': False, 'code': 'room_membership_required'}
+                if row['is_bot']:
+                    conn.rollback()
+                    return {'success': False, 'code': 'bot_rebuy_forbidden'}
+                if row['game_stage'] not in ('waiting', 'finished'):
+                    conn.rollback()
+                    return {'success': False, 'code': 'hand_in_progress'}
+                if row['chips'] > 0:
+                    conn.rollback()
+                    return {'success': False, 'code': 'rebuy_not_broke'}
+                limit = row['rebuy_limit']
+                used = int(row['rebuys_used'] or 0)
+                if limit is not None and used >= int(limit):
+                    conn.rollback()
+                    return {'success': False, 'code': 'rebuy_exhausted'}
+                cursor = conn.execute('''
+                    UPDATE table_players
+                    SET chips = ?, current_bet = 0, status = 'waiting', hole_cards = '[]',
+                        has_acted = 0, rebuys_used = rebuys_used + 1,
+                        tournament_status = 'active'
+                    WHERE table_id = ? AND player_id = ? AND chips = 0
+                      AND rebuys_used = ? AND is_bot = 0
+                ''', (initial_chips, table_id, player_id, used))
+                if cursor.rowcount != 1:
+                    conn.rollback()
+                    return {'success': False, 'code': 'rebuy_conflict'}
+                conn.commit()
+                new_used = used + 1
+                return {
+                    'success': True,
+                    'chips': initial_chips,
+                    'rebuys_used': new_used,
+                    'rebuys_remaining': ('unlimited' if limit is None
+                                          else max(0, int(limit) - new_used)),
+                }
+
+    def set_player_spectating(self, table_id: str, player_id: str) -> Dict:
+        """Persist a broke human's choice to remain at the table as a spectator."""
+        with self.lock:
+            with self.get_connection() as conn:
+                conn.execute('BEGIN IMMEDIATE')
+                row = conn.execute('''
+                    SELECT tp.is_bot, tp.chips, t.game_stage
+                    FROM table_players tp JOIN tables t ON t.id = tp.table_id
+                    WHERE tp.table_id = ? AND tp.player_id = ? AND t.is_active = 1
+                ''', (table_id, player_id)).fetchone()
+                if not row:
+                    conn.rollback()
+                    return {'success': False, 'code': 'room_membership_required'}
+                if row['is_bot']:
+                    conn.rollback()
+                    return {'success': False, 'code': 'bot_rebuy_forbidden'}
+                if row['game_stage'] not in ('waiting', 'finished'):
+                    conn.rollback()
+                    return {'success': False, 'code': 'hand_in_progress'}
+                if row['chips'] > 0:
+                    conn.rollback()
+                    return {'success': False, 'code': 'rebuy_not_broke'}
+                conn.execute('''
+                    UPDATE table_players SET tournament_status = 'spectating', status = 'broke'
+                    WHERE table_id = ? AND player_id = ?
+                ''', (table_id, player_id))
+                conn.commit()
+                return {'success': True}
+
     def set_player_disconnected_at(self, table_id: str, player_id: str,
                                    disconnected_at: Optional[float]) -> bool:
         """Update connection presence without changing gameplay status."""
@@ -635,12 +713,15 @@ class PokerDatabase:
                 for player in table.players:
                     conn.execute('''
                         UPDATE table_players SET chips = ?, current_bet = ?, status = ?,
-                            hole_cards = ?, has_acted = ?, disconnected_at = ?
+                            hole_cards = ?, has_acted = ?, disconnected_at = ?,
+                            rebuys_used = ?, tournament_status = ?
                         WHERE table_id = ? AND player_id = ?
                     ''', (
                         player.chips, player.current_bet, player.status.value,
                         json.dumps([card.to_dict() for card in player.hole_cards]),
-                        int(player.has_acted), getattr(player, 'disconnected_at', None), table.id, player.id,
+                        int(player.has_acted), getattr(player, 'disconnected_at', None),
+                        int(getattr(player, 'rebuys_used', 0)),
+                        getattr(player, 'tournament_status', 'active'), table.id, player.id,
                     ))
                 conn.commit()
     

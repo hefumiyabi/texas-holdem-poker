@@ -1755,6 +1755,70 @@ def handle_v1_room_heartbeat(_data=None):
         emit('connection:status', {'authenticated': True, 'heartbeat': True})
 
 
+def _rebuy_error(code: str) -> str:
+    return {
+        'bot_rebuy_forbidden': '机器人不能重新买入',
+        'hand_in_progress': '只能在两手牌之间重新买入',
+        'rebuy_not_broke': '仍有筹码时不能重新买入',
+        'rebuy_exhausted': '重新买入次数已用完',
+        'rebuy_conflict': '重新买入状态已更新',
+    }.get(code, '无法重新买入')
+
+
+@socketio.on('player:rebuy')
+def handle_v1_player_rebuy(_data=None):
+    context = _v1_room_context()
+    if not context:
+        return
+    session, record, _table = context
+    with _get_table_state_lock(record['id']):
+        context = _v1_room_context()
+        if not context:
+            return
+        session, record, table = context
+        result = db.try_rebuy_player(record['id'], session['player_id'], table.initial_chips)
+        if not result.get('success'):
+            _v1_error(result.get('code', 'rebuy_rejected'), _rebuy_error(result.get('code', '')))
+            return
+        player = table.get_player(session['player_id'])
+        if not player:
+            _v1_error('room_membership_required', '您不在这个房间中')
+            return
+        player.chips = table.initial_chips
+        player.current_bet = 0
+        player.total_bet = 0
+        player.hole_cards = []
+        player.has_acted = False
+        player.status = PlayerStatus.WAITING
+        player.rebuys_used = int(result['rebuys_used'])
+        player.tournament_status = 'active'
+        table._advance_action_revision()
+        _emit_v1_snapshots(record['id'])
+
+
+@socketio.on('player:spectate')
+def handle_v1_player_spectate(_data=None):
+    context = _v1_room_context()
+    if not context:
+        return
+    session, record, _table = context
+    with _get_table_state_lock(record['id']):
+        context = _v1_room_context()
+        if not context:
+            return
+        session, record, table = context
+        result = db.set_player_spectating(record['id'], session['player_id'])
+        if not result.get('success'):
+            _v1_error(result.get('code', 'spectate_rejected'), _rebuy_error(result.get('code', '')))
+            return
+        player = table.get_player(session['player_id'])
+        if player:
+            player.status = PlayerStatus.BROKE
+            player.tournament_status = 'spectating'
+            table._advance_action_revision()
+        _emit_v1_snapshots(record['id'])
+
+
 @socketio.on('room:dissolve')
 def handle_v1_room_dissolve(_data=None):
     context = _v1_room_context(require_host=True)

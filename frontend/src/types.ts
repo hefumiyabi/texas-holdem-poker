@@ -51,6 +51,11 @@ export interface Player {
   bot_level?: BotDifficulty
   bot_persona?: BotPersona
   persona_label?: string
+  rebuy_limit?: RebuyLimit
+  rebuys_used?: number
+  rebuys_remaining?: number | 'unlimited'
+  can_rebuy?: boolean
+  tournament_status?: 'active' | 'busted' | 'spectating' | 'eliminated'
 }
 
 export interface RoomInfo {

@@ -89,6 +89,7 @@ class Table:
         self.turn_deadline = None
         self.thinking_until = None
         self.action_revision = 0
+        self.rebuy_limit: Optional[int] = 1
 
     def _advance_action_revision(self) -> None:
         """Invalidate every previously issued turn token after an authoritative mutation."""
@@ -997,6 +998,18 @@ class Table:
         for player in self.players:
             state = player.to_dict(include_hole_cards=(player.id == player_id))
             state['connected'] = getattr(player, 'disconnected_at', None) is None
+            used = int(getattr(player, 'rebuys_used', 0))
+            remaining = ('unlimited' if self.rebuy_limit is None
+                         else max(0, int(self.rebuy_limit) - used))
+            between_hands = self.game_stage in (GameStage.WAITING, GameStage.FINISHED)
+            state.update({
+                'rebuy_limit': 'unlimited' if self.rebuy_limit is None else int(self.rebuy_limit),
+                'rebuys_used': used,
+                'rebuys_remaining': remaining,
+                'can_rebuy': (not player.is_bot and player.chips <= 0 and between_hands
+                              and (remaining == 'unlimited' or remaining > 0)),
+                'tournament_status': getattr(player, 'tournament_status', 'active'),
+            })
             player_states.append(state)
         now = time.time()
         elapsed = self.effective_tournament_seconds(now)
@@ -1291,6 +1304,7 @@ class Table:
         for p in self.hand_players:
             if p.chips <= 0 and p in self.players and p.status != PlayerStatus.DISCONNECTED:
                 p.status = PlayerStatus.BROKE
+                p.tournament_status = 'eliminated' if p.is_bot else 'busted'
                 print(f"💸 {p.nickname} 筹码输光，转为观战")
 
         self.game_stage = GameStage.FINISHED
