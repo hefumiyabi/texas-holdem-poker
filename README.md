@@ -31,20 +31,23 @@ The current release is a mobile-first React + TypeScript private poker room with
 **游戏**
 - 标准德州扑克规则，2–9 人同桌，盲注随庄家轮换（单挑局庄家即小盲）
 - 盲注模式 / 按比例下注两种房间模式，可自定义盲注、初始筹码和人数
-- 四个等级的 AI 机器人，逐个决策、节奏自然
-- 无需注册，输入昵称即可开始；断线后 30 秒内可重连回原座位
+- 休闲 / 常规 / 高手三档公平 AI，按位置逐个思考，会按牌力、赔率和局面诈唬
+- 无需注册，输入昵称即可开始；在线待机不会被自动踢出，断线座位最多保留 1 小时（限同一服务进程仍在运行）
 - 房间创建者可一键解散房间
 - 中英文界面一键切换
+- 家庭锦标赛与机器人挑战均使用 10 分钟盲注级别，按标准序列逐级增长
+- 私人局可设置真人补码 0 / 1 / 2 / 3 次或无限；机器人淘汰后不能补码
 
 **辅助**（仅纯人机练习时启用；牌桌上有 2 名及以上真人时自动关闭，保证公平）
 - 牌型分析面板：公共牌最佳牌型、我的当前牌型与单挑胜率、对手可能牌型分布
 - 记牌助手：已出现的牌与剩余牌组
 - 玩家卡片显示当前下注、本手累计投入及庄家 / 小盲 / 大盲徽章
-- 下注金额滑块，与输入框双向联动
-- 按真实规则结算：主池 / 边池、平分底池、退还无人跟注的筹码；筹码输光的玩家转为观战
+- 点击式下注金额：`½池 / ¾池 / 满池 / 3× / 4× / 6× / 全下 / 自定义`
+- 按真实规则结算：主池 / 边池、平分底池、退还无人跟注的筹码，并展示每位玩家投入、收回、净输赢和终局筹码
+- 真人筹码归零后可按房间额度补码、继续观战或退出；机器人直接淘汰
 
 **数据与音乐**
-- SQLite 持久化玩家、房间与牌局状态，服务重启后可恢复
+- SQLite 保存房间配置与结算数据；活动牌局仍依赖单进程内存，不承诺服务重启后恢复
 - 摊牌记录与个人统计（胜率、奖金、手牌历史）
 - 根据场景自动切换的背景音乐（大厅 / 牌桌 / 紧张时刻），无需音乐文件即可播放
 
@@ -87,9 +90,9 @@ python app.py
 
 ### 🎮 游戏指南
 
-**操作**：过牌（Check）、跟注（Call）、下注 / 加注（Bet / Raise，可拖动滑块）、弃牌（Fold）、全下（All-in）。
+**操作**：过牌（Check）、跟注（Call）、下注 / 加注（Bet / Raise）、弃牌（Fold）、全下（All-in）。加注面板提供 `½池 / ¾池 / 满池 / 3× / 4× / 6× / 全下` 和自定义金额，金额表示“本轮加注到”的总额。
 
-**创建房间**：在大厅设置房间名称、游戏模式（盲注 / 按比例下注）、小盲与大盲、初始筹码（500–10,000）和最大人数（2 / 4 / 6 / 9），并可直接添加机器人。
+**创建房间**：大厅分别提供“挑战机器人”和“创建好友房”。好友房可选 2 / 4 / 6 人、人民币或日元筹码、预设或自定义买入、大小盲和真人补码次数；创建后可复制 6 位房间码邀请好友。
 
 **机器人等级**
 
@@ -148,20 +151,23 @@ docker run --rm -p 10000:10000 -e PORT=10000 -e POKER_DATA_DIR=/var/data -v poke
 **Gameplay**
 - Standard Hold'em rules for 2–9 players, with blinds rotating with the button (heads-up: dealer posts the small blind)
 - Two room modes — blinds or proportional betting — with configurable blinds, starting stack and seats
-- AI bots at four levels, acting one at a time at a natural pace
-- No sign-up: enter a nickname and play; reconnect to your seat within 30 seconds after a disconnect
+- Three fair AI levels (casual / regular / expert), acting in strict seat order with natural thinking pauses and situational bluffs
+- No sign-up: enter a nickname and play; connected idle players are not timed out, while a disconnected seat is retained for up to one hour as long as the same service process remains alive
 - Room creators can dissolve a room with one click
 - One-click Chinese / English UI switch
+- Bot challenges and family tournaments use ten-minute blind levels with a standard increasing schedule
+- Private rooms can allow 0 / 1 / 2 / 3 or unlimited human rebuys; eliminated bots never rebuy
 
 **Assistance** (bot practice only — turned off automatically when 2 or more humans are at the table)
 - Hand analysis panel: best board hand, your current hand and heads-up equity, opponent hand distribution
 - Card tracker showing revealed cards and the remaining deck
 - Player cards show current bet, total put in this hand, and Dealer / SB / BB badges
-- Bet slider synced with the amount input
-- Real settlement rules: main / side pots, split pots, uncalled bets returned; busted players sit out and watch
+- Click-based sizing for `½ pot / ¾ pot / pot / 3× / 4× / 6× / all-in / custom`
+- Real settlement rules: main / side pots, split pots, uncalled bets returned, plus per-player invested, payout, net result, and final stack
+- Busted humans may rebuy within the room limit, spectate, or leave; busted bots are eliminated
 
 **Data & music**
-- SQLite persistence for players, rooms and table state, restored after a server restart
+- SQLite stores room configuration and settlement data; an active hand remains process-local and is not guaranteed to survive a service restart
 - Showdown history and personal stats (win rate, winnings, hand history)
 - Background music that follows the scene (lobby / table / tense moments), no audio files required
 
@@ -204,9 +210,9 @@ Open <http://localhost:8888> and enter a nickname. The server prints a "📱 局
 
 ### 🎮 Game Guide
 
-**Actions**: Check, Call, Bet / Raise (drag the slider for quick sizing), Fold, All-in.
+**Actions**: Check, Call, Bet / Raise, Fold, All-in. The sizing panel offers `½ pot / ¾ pot / pot / 3× / 4× / 6× / all-in` and a custom raise-to amount.
 
-**Creating a room**: in the lobby, set the room name, mode (blinds / proportional betting), small and big blind, starting chips (500–10,000) and max players (2 / 4 / 6 / 9), and add bots right away.
+**Creating a room**: the lobby separates bot challenges from private friend rooms. Friend rooms support 2 / 4 / 6 seats, CNY or JPY chips, preset or custom buy-in, custom blinds, and a human rebuy limit, then provide a six-character invite code.
 
 **Bot levels**
 

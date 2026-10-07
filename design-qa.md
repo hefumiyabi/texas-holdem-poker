@@ -1,16 +1,33 @@
 # Character Table Design QA
 
-Date: 2026-10-06
+Date: 2026-10-07
 
 Visual reference: `/Users/guangkaichen/.codex/generated_images/01a105cb-5b26-7e00-bd35-adb163f725a7/exec-144c75b5-31f1-4323-9543-7394a0dccd83.png`
 
 ## Automated verification
 
-- `npm test`: 22 files, 50 tests passed.
-- `npm run build`: TypeScript and Vite production build passed.
-- `.venv/bin/python -m unittest discover -s tests`: 61 tests passed.
-- Browser console: no warnings or errors during the complete flow.
-- Render `/healthz`: HTTP 200 with `{ "status": "ok" }`; deployed bundle matched local `index-0G_85XtZ.js` / `index-kY8P_iKg.css`.
+- `npm --prefix frontend test -- --run`: 23 files, 61 tests passed.
+- `npm --prefix frontend run build`: TypeScript and Vite production build passed (4,638 modules; JS 431.20 kB / gzip 133.75 kB; CSS 37.59 kB / gzip 8.86 kB).
+- `.venv/bin/python -m unittest discover -s tests`: 89 tests passed.
+- Load smoke: 10 rooms / 60 Socket.IO clients passed in 0.54 s; wrapper wall time 0.95 s, CPU 0.86 s, peak RSS 42.5 MiB.
+- Browser console: no warnings or errors during the current local acceptance flow.
+
+## 2026-10-07 local tournament acceptance
+
+Completed against the current local branch at `http://127.0.0.1:8898`; no deploy or push was performed.
+
+1. Verified bot-challenge and friend-room setup both expose human rebuy limits `0 / 1 / 2 / 3 / unlimited`, defaulting to one, with explicit copy that bots never rebuy.
+2. Started a heads-up bot challenge and left the human action untouched for 10 seconds. The pot, stacks, turn owner, and enabled human controls did not change; the bot did not act out of order.
+3. Opened raise sizing and verified visible, distinct `½ pot / ¾ pot / pot / 3× / 4× / 6× / all-in / custom` targets plus a high-contrast confirmation amount.
+4. Verified the table shows the current blind level, a `09:xx` countdown from the default ten-minute level, and the next `15 / 30` level.
+5. Reached a completed hand and verified the result card shows viewer net result, invested amount, payout, final stack, reason/hand category, and an expandable all-player view.
+6. Created private room `NSDVD2` in one browser context and joined it as `好友QA` from a second independent browser context. Both clients showed authoritative `1,000` stacks and the host start control became enabled.
+7. Started that two-human hand and paused the first player for 5 seconds. The second browser remained `观战中` with disabled controls, proving strict human turn order across clients.
+8. Automated fake-clock tests cover exact blind-boundary advancement and pause/resume without counting paused time. Socket tests cover 3,599-second recovery, expiry at 3,600 seconds, and pausing when the disconnected player becomes current.
+9. Automated elimination tests cover every human rebuy limit, spectate/leave, and the invariant that bots cannot rebuy.
+10. Duplicate turn-token, out-of-turn, stale sleeping-bot, concurrent next-round vote, 244 bot-hand legality, and 2,173 randomized-hand chip-conservation/no-stall regressions all passed.
+
+The one-hour reconnect guarantee is intentionally process-local. A Render Free cold start, redeploy, or process restart can discard active in-memory rooms and its ephemeral SQLite files.
 
 ## Browser acceptance
 
@@ -45,6 +62,10 @@ Completed in the Codex in-app browser against `http://127.0.0.1:8899`:
 27. After the final action-formatting review fixes, verified Render served `index-0G_85XtZ.js`, `/healthz` remained healthy, and live JPY room `DBPZYA` preserved `JP¥345,678` with `JP¥750 / JP¥1,500` blinds.
 
 ## Responsive evidence
+
+- Current 2026-10-07 measurements at `390×844`, `768×1024`, and `1440×900`: `scrollWidth/scrollHeight` exactly matched each viewport for both active-hand and completed-hand states; neither axis overflowed.
+- Active-hand measurements: hero cards ended at `y=694 / 904 / 780`, while the action rail began at `y=740 / 916 / 792`; overlap was false at every target size. Community cards also did not overlap the action rail.
+- Completed-hand measurements: the result card occupied `y=70..260` at 390×844 and `y=76..281` at both larger sizes. It did not overlap the community cards, hero cards, or next-hand controls at any target size.
 
 - `390×844`: `scrollWidth = 390`, `scrollHeight = 844`; no document scrolling. Self seat `y=512.7..593.7`, hero stack `y=595..694`, hero cards `y=625..694`, action rail `y=740..844`; 1.3 px seat-to-stack gap and 46 px hand-to-action gap.
 - `390×844` currency setup: default form measured `y=191.8..844`, with its create button fully visible at `y=768..822`; the expanded custom form measured `y=114.8..844`, also keeping the create button fully visible at `y=768..822`.
