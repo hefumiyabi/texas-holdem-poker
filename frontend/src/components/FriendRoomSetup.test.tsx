@@ -39,6 +39,10 @@ describe('FriendRoomSetup', () => {
     expect(screen.getByRole('button', { name: '带入 ¥1,000' })).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByRole('spinbutton', { name: '小盲' })).toHaveValue(10)
     expect(screen.getByRole('spinbutton', { name: '大盲' })).toHaveValue(20)
+    expect(screen.getByRole('button', { name: '1 次' })).toHaveAttribute('aria-pressed', 'true')
+    for (const label of ['不允许', '1 次', '2 次', '3 次', '无限']) {
+      expect(screen.getByRole('button', { name: label })).toBeInTheDocument()
+    }
   })
 
   it('traps keyboard focus, closes with Escape, and restores the launcher', async () => {
@@ -63,11 +67,12 @@ describe('FriendRoomSetup', () => {
 
     await userEvent.click(screen.getByRole('button', { name: '四人桌' }))
     await userEvent.click(screen.getByRole('button', { name: '带入 ¥5,000' }))
+    await userEvent.click(screen.getByRole('button', { name: '无限' }))
     const createButton = screen.getByRole('button', { name: '创建牌桌' })
     await userEvent.dblClick(createButton)
 
     expect(onCreate).toHaveBeenCalledTimes(1)
-    expect(onCreate).toHaveBeenCalledWith({ seatCount: 4, currency: 'CNY', initialChips: 5000, smallBlind: 10, bigBlind: 20 })
+    expect(onCreate).toHaveBeenCalledWith({ seatCount: 4, currency: 'CNY', initialChips: 5000, smallBlind: 10, bigBlind: 20, rebuyLimit: 'unlimited' })
     expect(createButton).toBeDisabled()
     resolveCreate?.(createdRoom)
   })
@@ -93,6 +98,7 @@ describe('FriendRoomSetup', () => {
       initialChips: 345678,
       smallBlind: 750,
       bigBlind: 1500,
+      rebuyLimit: 1,
     })
   })
 

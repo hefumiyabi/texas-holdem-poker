@@ -2,7 +2,7 @@ import { Check, Copy, ShareNetwork, UsersThree, X } from '@phosphor-icons/react'
 import { useEffect, useRef, useState } from 'react'
 
 import { translate } from '../i18n'
-import type { CurrencyCode, FriendRoomConfig, Language, RoomInfo } from '../types'
+import type { CurrencyCode, FriendRoomConfig, Language, RebuyLimit, RoomInfo } from '../types'
 
 const seatCounts = [2, 4, 6] as const
 const buyIns: Record<CurrencyCode, readonly number[]> = {
@@ -10,6 +10,7 @@ const buyIns: Record<CurrencyCode, readonly number[]> = {
   JPY: [10000, 200000, 500000],
 }
 const symbols: Record<CurrencyCode, string> = { CNY: '¥', JPY: 'JP¥' }
+const rebuyLimits: RebuyLimit[] = [0, 1, 2, 3, 'unlimited']
 
 export function FriendRoomSetup({ language, onClose, onCreate, onEnter }: {
   language: Language
@@ -23,6 +24,7 @@ export function FriendRoomSetup({ language, onClose, onCreate, onEnter }: {
   const [customBuyIn, setCustomBuyIn] = useState(false)
   const [smallBlind, setSmallBlind] = useState('10')
   const [bigBlind, setBigBlind] = useState('20')
+  const [rebuyLimit, setRebuyLimit] = useState<RebuyLimit>(1)
   const [room, setRoom] = useState<RoomInfo | null>(null)
   const [busy, setBusy] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -38,6 +40,7 @@ export function FriendRoomSetup({ language, onClose, onCreate, onEnter }: {
   }, [])
 
   const seatLabel = (value: 2 | 4 | 6) => translate(language, value === 2 ? 'headsUp' : value === 4 ? 'fourPlayers' : 'sixPlayers')
+  const rebuyLabel = (value: RebuyLimit) => translate(language, value === 0 ? 'rebuyNone' : value === 1 ? 'rebuyOnce' : value === 2 ? 'rebuyTwice' : value === 3 ? 'rebuyThree' : 'rebuyUnlimited')
   const inviteUrl = room?.invite_url || (room ? `${window.location.origin}/room/${room.join_code}` : '')
   const chooseCurrency = (next: CurrencyCode) => {
     setCurrency(next)
@@ -62,7 +65,7 @@ export function FriendRoomSetup({ language, onClose, onCreate, onEnter }: {
     }
     setBusy(true)
     setError('')
-    try { setRoom(await onCreate({ seatCount, currency, initialChips, smallBlind: parsedSmallBlind, bigBlind: parsedBigBlind })) }
+    try { setRoom(await onCreate({ seatCount, currency, initialChips, smallBlind: parsedSmallBlind, bigBlind: parsedBigBlind, rebuyLimit })) }
     catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); setBusy(false) }
   }
   const copyInvite = async () => {
@@ -108,6 +111,7 @@ export function FriendRoomSetup({ language, onClose, onCreate, onEnter }: {
             <label className="stake-input"><span>{translate(language, 'smallBlind')}</span><div><b>{symbols[currency]}</b><input aria-label={translate(language, 'smallBlind')} type="number" min="1" step="1" value={smallBlind} onChange={(event) => setSmallBlind(event.target.value)} /></div></label>
             <label className="stake-input"><span>{translate(language, 'bigBlind')}</span><div><b>{symbols[currency]}</b><input aria-label={translate(language, 'bigBlind')} type="number" min="2" step="1" value={bigBlind} onChange={(event) => setBigBlind(event.target.value)} /></div></label>
           </div></fieldset>
+          <fieldset><legend>{translate(language, 'humanRebuys')}</legend><div className="choice-grid rebuy-grid">{rebuyLimits.map((value) => <button key={value} aria-pressed={rebuyLimit === value} onClick={() => setRebuyLimit(value)}>{rebuyLabel(value)}</button>)}</div><small className="field-hint">{translate(language, 'humanRebuysHint')}</small></fieldset>
           {error && <p className="form-error" role="alert">{error}</p>}
           <button className="start-challenge" disabled={busy} onClick={create}>{busy ? translate(language, 'creatingTable') : translate(language, 'createTable')}</button>
         </div>

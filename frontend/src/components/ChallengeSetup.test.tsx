@@ -21,6 +21,10 @@ describe('ChallengeSetup', () => {
     expect(screen.getByRole('dialog', { name: '设置机器人挑战' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '常规' })).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByRole('button', { name: '六人桌' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: '1 次' })).toHaveAttribute('aria-pressed', 'true')
+    for (const label of ['不允许', '1 次', '2 次', '3 次', '无限']) {
+      expect(screen.getByRole('button', { name: label })).toBeInTheDocument()
+    }
     expect(screen.getByRole('button', { name: '开始挑战' })).toBeEnabled()
   })
 
@@ -31,12 +35,15 @@ describe('ChallengeSetup', () => {
     await userEvent.click(screen.getByRole('button', { name: '高手' }))
     await userEvent.click(screen.getByRole('button', { name: '四人桌' }))
     await userEvent.click(screen.getByRole('button', { name: '带入 5,000' }))
-    await userEvent.click(screen.getByRole('button', { name: '开始挑战' }))
+    await userEvent.click(screen.getByRole('button', { name: '3 次' }))
+    await userEvent.dblClick(screen.getByRole('button', { name: '开始挑战' }))
 
+    expect(onStart).toHaveBeenCalledTimes(1)
     expect(onStart).toHaveBeenCalledWith({
       difficulty: 'advanced',
       seatCount: 4,
       initialChips: 5000,
+      rebuyLimit: 3,
       personas: ['aggressive', 'tight', 'caller'],
     })
   })
@@ -69,6 +76,7 @@ describe('ChallengeSetup', () => {
       difficulty: 'intermediate',
       seatCount: 6,
       initialChips: 1000,
+      rebuyLimit: 1,
       personas: ['aggressive', 'tight', 'caller', 'tricky', 'balanced'],
     })
   })

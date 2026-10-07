@@ -23,6 +23,7 @@ export const api = {
       seat_count: config.seatCount,
       initial_chips: config.initialChips,
       personas: config.personas,
+      rebuy_limit: config.rebuyLimit,
     } : { title: '好友之夜', max_players: 6 }),
   }),
   createFriendRoom: (config: FriendRoomConfig) => request<{ success: true; room: RoomInfo }>('/api/v1/rooms', {
@@ -34,6 +35,7 @@ export const api = {
       initial_chips: config.initialChips,
       small_blind: config.smallBlind,
       big_blind: config.bigBlind,
+      rebuy_limit: config.rebuyLimit,
     }),
   }),
   previewRoom: (code: string) => request<{ success: true; room: RoomInfo }>(`/api/v1/rooms/${encodeURIComponent(code)}`),

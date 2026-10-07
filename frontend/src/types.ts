@@ -3,12 +3,14 @@ export type ConnectionState = 'connecting' | 'connected' | 'reconnecting' | 'off
 export type BotDifficulty = 'beginner' | 'intermediate' | 'advanced'
 export type BotPersona = 'balanced' | 'aggressive' | 'tight' | 'caller' | 'tricky'
 export type CurrencyCode = 'CNY' | 'JPY'
+export type RebuyLimit = 0 | 1 | 2 | 3 | 'unlimited'
 
 export interface ChallengeConfig {
   difficulty: BotDifficulty
   seatCount: 2 | 4 | 6
   initialChips: 1000 | 5000 | 10000
   personas: BotPersona[]
+  rebuyLimit: RebuyLimit
 }
 
 export interface FriendRoomConfig {
@@ -17,6 +19,7 @@ export interface FriendRoomConfig {
   initialChips: number
   smallBlind: number
   bigBlind: number
+  rebuyLimit: RebuyLimit
 }
 
 export interface User {
@@ -64,6 +67,7 @@ export interface RoomInfo {
   mode?: 'private' | 'bot_challenge'
   difficulty?: BotDifficulty | null
   currency?: CurrencyCode
+  rebuy_limit?: RebuyLimit
 }
 
 export interface TableInfo {
