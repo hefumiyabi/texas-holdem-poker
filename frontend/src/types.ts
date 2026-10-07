@@ -84,6 +84,8 @@ export interface TableInfo {
   pot: number
   current_bet?: number
   current_player_id?: string | null
+  turn_token?: string | null
+  action_revision?: number
   min_bet?: number
   min_raise_to?: number
   players: Player[]

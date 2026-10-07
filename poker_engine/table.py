@@ -84,6 +84,18 @@ class Table:
         self.turn_clock_key = None
         self.turn_deadline = None
         self.thinking_until = None
+        self.action_revision = 0
+
+    def _advance_action_revision(self) -> None:
+        """Invalidate every previously issued turn token after an authoritative mutation."""
+        self.action_revision += 1
+
+    def get_turn_token(self) -> Optional[str]:
+        """Return the opaque token for exactly the currently actionable turn."""
+        current = self.get_current_player()
+        if not current:
+            return None
+        return f"{self.hand_number}:{self.game_stage.value}:{current.id}:{self.action_revision}"
     
     def add_player(self, player: Player) -> bool:
         """添加玩家到牌桌"""
@@ -275,6 +287,7 @@ class Table:
             print(f"🎮 按比例下注模式: 每人缴纳ante ${ante_amount} (筹码的{self.ante_percentage*100:.1f}%), 总底池${total_ante}, 现在开始下注轮（current_bet=${self.current_bet})")
         
         self.last_activity = time.time()
+        self._advance_action_revision()
         print(f"🎮 新手牌开始: 手牌#{self.hand_number}, 阶段={self.game_stage.value}, 活跃玩家={len(active_players)}, 模式={self.game_mode}")
         return True
     
@@ -300,6 +313,7 @@ class Table:
             action_description = executed['description']
             action = executed['action']
             self.last_activity = time.time()
+            self._advance_action_revision()
             
             # 检查游戏流程
             flow_result = self.process_game_flow()
@@ -477,6 +491,69 @@ class Table:
             'position': self._position_of(player),
             'all_players': visible_players,
         }
+
+    def process_one_bot_action(self, expected_turn_token: str) -> Dict:
+        """Commit at most one bot decision if the captured turn is still current.
+
+        Delays belong to the application layer. This method never sleeps, which
+        lets callers release the table lock while the bot appears to think.
+        """
+        current_token = self.get_turn_token()
+        if not expected_turn_token or expected_turn_token != current_token:
+            return {'success': False, 'stale_turn': True, 'code': 'stale_turn'}
+        player = self.get_current_player()
+        if not isinstance(player, Bot):
+            return {'success': False, 'stale_turn': False, 'code': 'human_turn'}
+
+        try:
+            decision = player.decide_action(self._bot_game_state(player))
+        except Exception as exc:
+            print(f"❌ 机器人 {player.nickname} 决策出错: {exc}")
+            decision = None
+        if not decision:
+            decision = (PlayerAction.CHECK, 0) if player.current_bet >= self.current_bet else (PlayerAction.FOLD, 0)
+
+        action, amount = decision
+        executed = self._execute_action(player, action, amount, strict=False)
+        if not executed.get('success'):
+            if player.status == PlayerStatus.PLAYING and player.chips > 0:
+                player.fold()
+                player.has_acted = True
+                executed = {
+                    'success': True, 'action': PlayerAction.FOLD, 'amount': 0,
+                    'target_amount': player.current_bet, 'description': '弃牌',
+                }
+            else:
+                return executed
+
+        self.last_activity = time.time()
+        self._advance_action_revision()
+        flow_result = self.process_game_flow()
+        result = {
+            'success': True,
+            'player_id': player.id,
+            'action': executed['action'].value,
+            'amount': executed.get('amount', 0),
+            'target_amount': executed.get('target_amount', player.current_bet),
+            'description': executed.get('description', ''),
+            'hand_complete': flow_result.get('hand_complete', False),
+            'stage_changed': flow_result.get('stage_changed', False),
+            'winners': flow_result.get('winners', []),
+        }
+        if flow_result.get('hand_complete'):
+            result['winner'] = flow_result.get('winner')
+            result['showdown_info'] = flow_result.get('showdown_info', {})
+        return result
+
+    def force_fold_player(self, player_id: str) -> Dict:
+        """Fold an active player as an authoritative server transition."""
+        player = self.get_player(player_id)
+        if not player or player.status != PlayerStatus.PLAYING:
+            return {'success': False}
+        player.fold()
+        player.has_acted = True
+        self._advance_action_revision()
+        return {'success': True}
     
     def process_bot_actions(self):
         """处理机器人动作 - 持续处理直到轮到人类玩家或游戏结束"""
@@ -890,6 +967,8 @@ class Table:
             'pot': self.pot,
             'current_bet': self.current_bet,
             'current_player_id': current_player.id if current_player else None,
+            'turn_token': self.get_turn_token(),
+            'action_revision': self.action_revision,
             'min_bet': self.min_bet(),
             'min_raise_to': self.min_raise_to(),
             'players': [p.to_dict(include_hole_cards=(p.id == player_id)) for p in self.players],
@@ -977,6 +1056,7 @@ class Table:
                 player.has_acted = False  # 重置行动状态
         
         self.last_activity = time.time()
+        self._advance_action_revision()
         return True
     
     def is_hand_complete(self) -> bool:
@@ -1055,6 +1135,7 @@ class Table:
             print("⚠️ 结算时没有在局玩家，底池保留")
             self.game_stage = GameStage.FINISHED
             self.last_hand_result = self._sanitize_hand_result(showdown_info)
+            self._advance_action_revision()
             return showdown_info
 
         winnings: Dict[str, int] = {p.id: 0 for p in contenders}
@@ -1160,6 +1241,7 @@ class Table:
 
         self.game_stage = GameStage.FINISHED
         self.last_hand_result = self._sanitize_hand_result(showdown_info)
+        self._advance_action_revision()
         return showdown_info
 
     @staticmethod

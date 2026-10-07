@@ -64,7 +64,7 @@ export function TablePage({ preferences, onPreferences }: { preferences: Prefere
     const selfIndex = table.players.findIndex((player) => player.id === snapshot.viewer_id)
     return selfIndex < 0 ? table.players : [...table.players.slice(selfIndex), ...table.players.slice(0, selfIndex)]
   }, [table, snapshot])
-  const act = (action: string, amount = 0) => socket?.emit('player:act', { action, amount })
+  const act = (action: string, amount = 0) => socket?.emit('player:act', { action, amount, turn_token: table?.turn_token })
   const share = async () => { const url = snapshot?.room.invite_url || window.location.origin + `/room/${code.toUpperCase()}`; try { if (navigator.share) await navigator.share({ title: snapshot?.room.title, url }); else await navigator.clipboard.writeText(url); setCopied(true); window.setTimeout(() => setCopied(false), 1600) } catch { /* user cancelled */ } }
   if (!table || !snapshot || !viewer) return <main className="table-shell loading-table"><Spade weight="fill"/><p>{state.error || translate(language, 'loading')}</p><button onClick={() => navigate('/')}>{translate(language, 'back')}</button></main>
   const isTurn = table.current_player_id === snapshot.viewer_id

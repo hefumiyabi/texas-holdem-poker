@@ -532,20 +532,88 @@ class V1SocketTestCase(unittest.TestCase):
         socket_client.emit("hand:start", {})
         socket_client.get_received()
 
-        socket_client.emit("player:act", {"action": "raise", "amount": 300})
+        turn_token = self.app_module.tables[room["id"]].get_turn_token()
+        socket_client.emit("player:act", {"action": "raise", "amount": 300, "turn_token": turn_token})
         rejected = self.events_named(socket_client, "error")[-1]
         self.assertEqual(rejected["minimum"], 400)
         self.assertEqual(rejected["action"], "raise")
         self.assertEqual(rejected["currency"], "JPY")
         self.assertNotIn("$", rejected["message"])
 
-        socket_client.emit("player:act", {"action": "raise", "amount": 400})
+        socket_client.emit("player:act", {"action": "raise", "amount": 400, "turn_token": turn_token})
         resolved = self.events_named(socket_client, "action:resolved")[-1]
         self.assertEqual(resolved["action"], "raise")
         self.assertEqual(resolved["amount"], 300)
         self.assertEqual(resolved["target_amount"], 400)
         self.assertEqual(resolved["currency"], "JPY")
         self.assertNotIn("description", resolved)
+
+    def test_duplicate_human_turn_token_is_rejected_without_mutation(self):
+        host_client, host, room = self.create_room()
+        guest_client, _ = self.guest_client("Guest")
+        guest_client.post(f"/api/v1/rooms/{room['join_code']}/join", json={"position": 1})
+        socket_client = self.app_module.socketio.test_client(
+            self.app_module.app, flask_test_client=host_client
+        )
+        socket_client.emit("room:join", {"join_code": room["join_code"]})
+        socket_client.get_received()
+        socket_client.emit("hand:start", {})
+        socket_client.get_received()
+        table = self.app_module.tables[room["id"]]
+        self.assertEqual(table.get_current_player().id, host["id"])
+        token = table.get_turn_token()
+
+        socket_client.emit("player:act", {"action": "fold", "turn_token": token})
+        after_first = (table.pot, table.current_bet, [p.chips for p in table.players], table.action_revision)
+        socket_client.get_received()
+        socket_client.emit("player:act", {"action": "fold", "turn_token": token})
+
+        self.assertEqual(self.events_named(socket_client, "error")[-1]["code"], "stale_turn")
+        self.assertEqual((table.pot, table.current_bet, [p.chips for p in table.players], table.action_revision), after_first)
+
+    def test_out_of_turn_actor_cannot_mutate_table_with_current_token(self):
+        host_client, host, room = self.create_room()
+        guest_client, _guest = self.guest_client("Guest")
+        guest_client.post(f"/api/v1/rooms/{room['join_code']}/join", json={"position": 1})
+        host_socket = self.app_module.socketio.test_client(self.app_module.app, flask_test_client=host_client)
+        guest_socket = self.app_module.socketio.test_client(self.app_module.app, flask_test_client=guest_client)
+        for client in (host_socket, guest_socket):
+            client.emit("room:join", {"join_code": room["join_code"]})
+            client.get_received()
+        host_socket.emit("hand:start", {})
+        host_socket.get_received(); guest_socket.get_received()
+        table = self.app_module.tables[room["id"]]
+        self.assertEqual(table.get_current_player().id, host["id"])
+        before = (table.pot, table.current_bet, [p.chips for p in table.players], table.action_revision)
+
+        guest_socket.emit("player:act", {"action": "fold", "turn_token": table.get_turn_token()})
+
+        self.assertEqual(self.events_named(guest_socket, "error")[-1]["code"], "action_rejected")
+        self.assertEqual((table.pot, table.current_bet, [p.chips for p in table.players], table.action_revision), before)
+
+    def test_bot_sleep_overlap_discards_stale_decision_without_mutation(self):
+        _client, hero, room = self.create_challenge()
+        table = self.app_module.tables[room["id"]]
+        self.assertTrue(table.start_new_hand())
+        self.assertEqual(table.get_current_player().id, hero["id"])
+        table.process_player_action(hero["id"], self.app_module.PlayerAction.CALL)
+        bot = table.get_current_player()
+        self.assertTrue(bot.is_bot)
+        before = (table.pot, table.current_bet, [p.chips for p in table.players], [p.current_bet for p in table.players])
+        revision = table.action_revision
+
+        def overlapping_state_change(_delay):
+            table.action_revision += 1
+
+        with mock.patch.object(self.app_module.socketio, "sleep", side_effect=overlapping_state_change), \
+             mock.patch.object(bot, "thinking_time", return_value=0.01), \
+             mock.patch.object(bot, "decide_action", wraps=bot.decide_action) as decide:
+            result = self.app_module._process_bot_actions_locked(room["id"])
+
+        self.assertTrue(result["stale_turn"])
+        self.assertEqual((table.pot, table.current_bet, [p.chips for p in table.players], [p.current_bet for p in table.players]), before)
+        self.assertEqual(table.action_revision, revision + 1)
+        decide.assert_not_called()
 
     def test_reconnect_restores_seat_and_own_hole_cards(self):
         host_client, host, room = self.create_room()
@@ -592,7 +660,8 @@ class V1SocketTestCase(unittest.TestCase):
         guest_socket.get_received()
         host_socket.emit("hand:start", {})
         host_socket.get_received()
-        host_socket.emit("player:act", {"action": "fold"})
+        table = self.app_module.tables[room["id"]]
+        host_socket.emit("player:act", {"action": "fold", "turn_token": table.get_turn_token()})
         host_socket.get_received()
         host_socket.disconnect()
 

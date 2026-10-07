@@ -180,6 +180,57 @@ def process_bot_actions(table_id: str):
 
 
 def _process_bot_actions_locked(table_id: str):
+    """Capture one bot turn, wait without the table lock, then commit by token."""
+    table = tables.get(table_id)
+    if not table:
+        return None
+
+    with _get_table_state_lock(table_id):
+        if table.game_stage == GameStage.FINISHED:
+            return None
+        _sync_turn_clock(table_id)
+        current = table.get_current_player()
+        if not current or not current.is_bot:
+            return None
+        turn_token = table.get_turn_token()
+        delay = max(0.0, (table.thinking_until or time.time()) - time.time())
+        bot_name = current.nickname
+        bot_level = current.bot_level.value
+
+    socketio.emit('bot_thinking', {
+        'bot_name': bot_name,
+        'bot_level': bot_level,
+        'thinking_time': delay,
+    }, room=table_id)
+    if any(session.get('table_id') == table_id for session in v1_socket_sessions.values()):
+        _emit_v1_snapshots(table_id, 'turn:changed')
+    if delay > 0:
+        socketio.sleep(delay)
+
+    with _get_table_state_lock(table_id):
+        table = tables.get(table_id)
+        if not table:
+            return None
+        result = table.process_one_bot_action(turn_token)
+        if result.get('stale_turn'):
+            return result
+        table.turn_clock_key = None
+        table.thinking_until = None
+        table.turn_deadline = None
+
+    if not result.get('success'):
+        return result
+    socketio.emit('table_updated', table.get_table_state(), room=table_id)
+    if result.get('hand_complete'):
+        handle_hand_end(table_id, result.get('winner'), result.get('showdown_info', {}))
+        _emit_v1_snapshots(table_id, 'hand:completed')
+    else:
+        _sync_turn_clock(table_id)
+        _emit_v1_snapshots(table_id, 'turn:changed')
+    return result
+
+
+def _process_bot_actions_legacy_locked(table_id: str):
     """处理机器人动作（调用方需持有该牌桌的处理锁）"""
     try:
         if table_id not in tables:
@@ -1468,7 +1519,7 @@ def _finalize_v1_disconnect(player_id: str, table_id: str):
             if player and table.game_stage in ACTIVE_HAND_STAGES and player in table._participants():
                 pending_v1_disconnects.add((table_id, player_id))
                 if player.status == PlayerStatus.PLAYING:
-                    player.fold()
+                    table.force_fold_player(player.id)
                 flow_result = table.process_game_flow()
             else:
                 flow_result = None
@@ -1801,6 +1852,7 @@ def handle_v1_player_action(data):
     action_name = str((data or {}).get('action', '')).lower()
     action = action_map.get(action_name)
     raw_amount = (data or {}).get('amount', 0)
+    turn_token = (data or {}).get('turn_token')
     amount = raw_amount if type(raw_amount) is int else -1
     if not action or amount < 0:
         _v1_error('invalid_action', '动作或金额无效')
@@ -1810,11 +1862,17 @@ def handle_v1_player_action(data):
         if not context:
             return
         session, record, table = context
-        result = table.process_player_action(session['player_id'], action, amount)
+        if not isinstance(turn_token, str) or turn_token != table.get_turn_token():
+            result = {'success': False, 'stale_turn': True, 'message': '行动回合已更新'}
+        else:
+            result = table.process_player_action(session['player_id'], action, amount)
         if result.get('success'):
             table.turn_clock_key = None
             table.turn_deadline = None
     if not result.get('success'):
+        if result.get('stale_turn'):
+            _v1_error('stale_turn', result.get('message', '行动回合已更新'))
+            return
         details = {
             key: result[key]
             for key in ('minimum', 'action')
