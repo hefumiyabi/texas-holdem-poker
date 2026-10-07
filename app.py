@@ -109,6 +109,7 @@ current_hands: Dict[str, int] = {}    # table_id -> hand_id (当前手牌ID)
 # 添加下一轮开始相关的数据结构
 next_round_votes = {}  # {table_id: {player_id: True/False}}
 pending_v1_disconnects = set()  # {(table_id, player_id)} retained through active-hand settlement
+pending_v1_spectators = set()  # expired seats retained as spectators after settlement
 
 _bot_processing_locks: Dict[str, threading.Lock] = {}
 _table_state_locks: Dict[str, threading.RLock] = {}
@@ -1541,9 +1542,17 @@ def _finalize_v1_disconnect(player_id: str, table_id: str, *, explicit: bool = F
                 return
             if player and table.game_stage in ACTIVE_HAND_STAGES and player in table._participants():
                 pending_v1_disconnects.add((table_id, player_id))
+                if not explicit:
+                    pending_v1_spectators.add((table_id, player_id))
                 if player.status == PlayerStatus.PLAYING:
                     table.force_fold_player(player.id)
                 flow_result = table.process_game_flow()
+            elif player and not explicit:
+                player.status = PlayerStatus.DISCONNECTED
+                player.tournament_status = 'spectating'
+                table._advance_action_revision()
+                db.save_table_progress(table)
+                flow_result = None
             else:
                 flow_result = None
         if flow_result and flow_result.get('hand_complete'):
@@ -1557,8 +1566,17 @@ def _finalize_v1_disconnect(player_id: str, table_id: str, *, explicit: bool = F
                 return
         if (table_id, player_id) in pending_v1_disconnects:
             return
-        table.remove_player(player_id)
-    db.leave_table(table_id, player_id)
+        if not explicit:
+            # Expired seats remain as read-only tournament spectators. This
+            # preserves their stack/result history and allows a later reconnect.
+            if player:
+                player.status = PlayerStatus.DISCONNECTED
+                player.tournament_status = 'spectating'
+                db.save_table_progress(table)
+        else:
+            table.remove_player(player_id)
+    if explicit:
+        db.leave_table(table_id, player_id)
     refreshed = db.get_table(table_id)
     if not refreshed:
         tables.pop(table_id, None)
@@ -1566,7 +1584,9 @@ def _finalize_v1_disconnect(player_id: str, table_id: str, *, explicit: bool = F
     host_id = record.get('host_id') or record['created_by']
     if host_id == player_id:
         next_human = next(
-            (row for row in db.get_table_players(table_id) if not row.get('is_bot')),
+            (row for row in db.get_table_players(table_id)
+             if not row.get('is_bot') and row['player_id'] != player_id
+             and row.get('disconnected_at') is None),
             None,
         )
         if next_human:
@@ -1776,6 +1796,9 @@ def handle_v1_player_rebuy(_data=None):
         if not context:
             return
         session, record, table = context
+        if table.game_stage not in (GameStage.WAITING, GameStage.FINISHED):
+            _v1_error('hand_in_progress', _rebuy_error('hand_in_progress'))
+            return
         result = db.try_rebuy_player(record['id'], session['player_id'], table.initial_chips)
         if not result.get('success'):
             _v1_error(result.get('code', 'rebuy_rejected'), _rebuy_error(result.get('code', '')))
@@ -1807,6 +1830,9 @@ def handle_v1_player_spectate(_data=None):
         if not context:
             return
         session, record, table = context
+        if table.game_stage not in (GameStage.WAITING, GameStage.FINISHED):
+            _v1_error('hand_in_progress', _rebuy_error('hand_in_progress'))
+            return
         result = db.set_player_spectating(record['id'], session['player_id'])
         if not result.get('success'):
             _v1_error(result.get('code', 'spectate_rejected'), _rebuy_error(result.get('code', '')))
@@ -1952,6 +1978,7 @@ def handle_v1_hand_start(_data=None):
         if not table.start_new_hand():
             _v1_error('not_enough_players', '至少需要两名有筹码的玩家')
             return
+        db.save_table_progress(table)
         next_round_votes[record['id']] = set()
         _emit_v1_snapshots(record['id'], 'hand:started')
         flow_result = table.process_game_flow() if table.get_current_player() is None else None
@@ -3257,6 +3284,7 @@ def start_next_round(table_id):
             print(f"❌ 新手牌开始失败")
             return False
 
+        db.save_table_progress(table)
         next_round_votes.pop(table_id, None)
         
         print(f"🎮 房间 {table.title} 开始下一轮")
@@ -3367,13 +3395,25 @@ def handle_hand_end(table_id, winner, showdown_info):
             if pending_table_id == table_id
         ]
         for player_id in disconnected_ids:
-            table.remove_player(player_id)
-            db.leave_table(table_id, player_id)
+            player = table.get_player(player_id)
+            if (table_id, player_id) in pending_v1_spectators and player:
+                player.status = PlayerStatus.DISCONNECTED
+                player.tournament_status = 'spectating'
+            else:
+                table.remove_player(player_id)
+                db.leave_table(table_id, player_id)
             pending_v1_disconnects.discard((table_id, player_id))
+            pending_v1_spectators.discard((table_id, player_id))
         if disconnected_ids:
+            db.save_table_progress(table)
             record = db.get_table(table_id)
             if record and (record.get('host_id') or record['created_by']) in disconnected_ids:
-                next_human = next((row for row in db.get_table_players(table_id) if not row.get('is_bot')), None)
+                next_human = next(
+                    (row for row in db.get_table_players(table_id)
+                     if not row.get('is_bot') and row['player_id'] not in disconnected_ids
+                     and row.get('disconnected_at') is None),
+                    None,
+                )
                 if next_human:
                     db.transfer_table_host(table_id, next_human['player_id'])
 

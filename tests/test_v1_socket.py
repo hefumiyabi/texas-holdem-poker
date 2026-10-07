@@ -25,6 +25,7 @@ class V1SocketTestCase(unittest.TestCase):
         self.app_module.v1_socket_sessions.clear()
         self.app_module.next_round_votes.clear()
         self.app_module.pending_v1_disconnects.clear()
+        self.app_module.pending_v1_spectators.clear()
         self.app_module._table_state_locks.clear()
         self.app_module.app.config.update(TESTING=True, SECRET_KEY="test-secret")
         if hasattr(self.app_module, "_rate_limit_buckets"):
@@ -237,6 +238,25 @@ class V1SocketTestCase(unittest.TestCase):
         result = self.app_module.db.try_rebuy_player(room["id"], bot.id, 5000)
         self.assertFalse(result["success"])
         self.assertEqual(result["code"], "bot_rebuy_forbidden")
+
+    def test_rebuy_and_spectate_reject_stale_finished_database_during_live_hand(self):
+        host_client, host, room = self.create_room(rebuy_limit=3)
+        socket_client = self.app_module.socketio.test_client(
+            self.app_module.app, flask_test_client=host_client
+        )
+        socket_client.emit("room:join", {"join_code": room["join_code"]})
+        socket_client.get_received()
+        table, player = self.make_player_broke(room, host["id"], stage="finished")
+        table.game_stage = self.app_module.GameStage.PRE_FLOP
+
+        socket_client.emit("player:rebuy", {})
+        self.assertEqual(self.events_named(socket_client, "error")[-1]["code"], "hand_in_progress")
+        self.assertEqual(player.chips, 0)
+        self.assertEqual(player.tournament_status, "busted")
+
+        socket_client.emit("player:spectate", {})
+        self.assertEqual(self.events_named(socket_client, "error")[-1]["code"], "hand_in_progress")
+        self.assertEqual(player.tournament_status, "busted")
 
     def test_two_concurrent_rebuys_award_only_one_stack(self):
         _client, host, room = self.create_room(initial_chips=1000, rebuy_limit=1)
@@ -812,7 +832,10 @@ class V1SocketTestCase(unittest.TestCase):
 
         self.assertIsNotNone(record)
         self.assertEqual(record["host_id"], guest["id"])
-        self.assertNotIn(host["id"], [row["player_id"] for row in self.app_module.db.get_table_players(table_id)])
+        expired = next(row for row in self.app_module.db.get_table_players(table_id)
+                       if row["player_id"] == host["id"])
+        self.assertEqual(expired["tournament_status"], "spectating")
+        self.assertIsNotNone(expired["disconnected_at"])
 
     def test_host_leave_transfers_control_immediately(self):
         host_client, _host, room = self.create_room()
@@ -891,7 +914,35 @@ class V1SocketTestCase(unittest.TestCase):
 
         self.app_module._expire_disconnected_players(room["id"], now=4600)
 
-        self.assertNotIn(host["id"], [row["player_id"] for row in self.app_module.db.get_table_players(room["id"])])
+        expired = next(row for row in self.app_module.db.get_table_players(room["id"])
+                       if row["player_id"] == host["id"])
+        self.assertEqual(expired["tournament_status"], "spectating")
+        self.assertEqual(expired["disconnected_at"], 1000)
+
+    def test_active_expired_seat_is_folded_then_retained_as_spectator(self):
+        host_client, host, room = self.create_room(max_players=2)
+        guest_client, _guest = self.guest_client("Guest")
+        guest_client.post(f"/api/v1/rooms/{room['join_code']}/join", json={"position": 1})
+        host_socket = self.app_module.socketio.test_client(
+            self.app_module.app, flask_test_client=host_client
+        )
+        host_socket.emit("room:join", {"join_code": room["join_code"]})
+        host_socket.get_received()
+        host_socket.emit("hand:start", {})
+        host_socket.get_received()
+        table = self.app_module.tables[room["id"]]
+        table.get_player(host["id"]).disconnected_at = 1000
+        self.app_module.db.set_player_disconnected_at(room["id"], host["id"], 1000)
+
+        self.app_module._finalize_v1_disconnect(host["id"], room["id"], now=4600)
+
+        retained = table.get_player(host["id"])
+        self.assertIsNotNone(retained)
+        self.assertEqual(retained.tournament_status, "spectating")
+        self.assertEqual(retained.status, self.app_module.PlayerStatus.DISCONNECTED)
+        row = next(row for row in self.app_module.db.get_table_players(room["id"])
+                   if row["player_id"] == host["id"])
+        self.assertEqual(row["tournament_status"], "spectating")
 
     def test_current_disconnect_pauses_clock_without_changing_gameplay_status(self):
         host_client, host, room = self.create_room()

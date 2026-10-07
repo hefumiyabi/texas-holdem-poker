@@ -8,8 +8,8 @@ Visual reference: `/Users/guangkaichen/.codex/generated_images/01a105cb-5b26-7e0
 
 - `npm --prefix frontend test -- --run`: 23 files, 61 tests passed.
 - `npm --prefix frontend run build`: TypeScript and Vite production build passed (4,638 modules; JS 431.20 kB / gzip 133.75 kB; CSS 37.59 kB / gzip 8.86 kB).
-- `.venv/bin/python -m unittest discover -s tests`: 89 tests passed.
-- Load smoke: 10 rooms / 60 Socket.IO clients passed in 0.54 s; wrapper wall time 0.95 s, CPU 0.86 s, peak RSS 42.5 MiB.
+- `.venv/bin/python -m unittest discover -s tests`: 92 tests passed.
+- Load smoke: 10 rooms / 60 Socket.IO clients passed in 0.56 s; wrapper wall time 0.99 s, CPU 0.93 s, peak RSS 44.4 MiB.
 - Browser console: no warnings or errors during the current local acceptance flow.
 
 ## 2026-10-07 local tournament acceptance
@@ -23,7 +23,7 @@ Completed against the current local branch at `http://127.0.0.1:8898`; no deploy
 5. Reached a completed hand and verified the result card shows viewer net result, invested amount, payout, final stack, reason/hand category, and an expandable all-player view.
 6. Created private room `NSDVD2` in one browser context and joined it as `好友QA` from a second independent browser context. Both clients showed authoritative `1,000` stacks and the host start control became enabled.
 7. Started that two-human hand and paused the first player for 5 seconds. The second browser remained `观战中` with disabled controls, proving strict human turn order across clients.
-8. Automated fake-clock tests cover exact blind-boundary advancement and pause/resume without counting paused time. Socket tests cover 3,599-second recovery, expiry at 3,600 seconds, and pausing when the disconnected player becomes current.
+8. Automated fake-clock tests cover exact blind-boundary advancement, multi-level overrun display, and pause/resume without counting paused time. Socket tests cover 3,599-second recovery, transition to a retained spectator at 3,600 seconds, and pausing when the disconnected player becomes current.
 9. Automated elimination tests cover every human rebuy limit, spectate/leave, and the invariant that bots cannot rebuy.
 10. Duplicate turn-token, out-of-turn, stale sleeping-bot, concurrent next-round vote, 244 bot-hand legality, and 2,173 randomized-hand chip-conservation/no-stall regressions all passed.
 

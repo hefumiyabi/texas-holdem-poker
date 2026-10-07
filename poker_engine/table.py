@@ -207,7 +207,11 @@ class Table:
     def start_new_hand(self, now: Optional[float] = None) -> bool:
         """开始新一手牌：只有在线且有筹码的玩家发牌，筹码为 0 的玩家转为观战（BROKE）"""
         ordered = self._seat_order()
-        active_players = [p for p in ordered if p.status != PlayerStatus.DISCONNECTED and p.chips > 0]
+        active_players = [
+            p for p in ordered
+            if p.status != PlayerStatus.DISCONNECTED and p.chips > 0
+            and getattr(p, 'tournament_status', 'active') == 'active'
+        ]
         if len(active_players) < 2:
             return False
 
@@ -994,7 +998,8 @@ class Table:
 
         return None
     
-    def get_table_state(self, player_id: Optional[str] = None) -> Dict:
+    def get_table_state(self, player_id: Optional[str] = None,
+                        now: Optional[float] = None) -> Dict:
         """获取牌桌状态"""
         current_player = self.get_current_player()
         player_states = []
@@ -1014,10 +1019,12 @@ class Table:
                 'tournament_status': getattr(player, 'tournament_status', 'active'),
             })
             player_states.append(state)
-        now = time.time()
-        elapsed = self.effective_tournament_seconds(now)
+        current_time = time.time() if now is None else now
+        elapsed = self.effective_tournament_seconds(current_time)
         seconds_remaining = max(0, int(self.blind_level * self.blind_level_seconds - elapsed))
-        next_small, next_big = self._blinds_for_level(self.blind_level + 1)
+        due_level = int(elapsed // max(1, self.blind_level_seconds)) + 1
+        next_level = max(self.blind_level + 1, due_level)
+        next_small, next_big = self._blinds_for_level(next_level)
         return {
             'id': self.id,
             'title': self.title,

@@ -32,7 +32,7 @@ The current release is a mobile-first React + TypeScript private poker room with
 - 标准德州扑克规则，2–9 人同桌，盲注随庄家轮换（单挑局庄家即小盲）
 - 盲注模式 / 按比例下注两种房间模式，可自定义盲注、初始筹码和人数
 - 休闲 / 常规 / 高手三档公平 AI，按位置逐个思考，会按牌力、赔率和局面诈唬
-- 无需注册，输入昵称即可开始；在线待机不会被自动踢出，断线座位最多保留 1 小时（限同一服务进程仍在运行）
+- 无需注册，输入昵称即可开始；在线待机不会被自动踢出，断线座位保留 1 小时，超时后转为观战（限同一服务进程仍在运行）
 - 房间创建者可一键解散房间
 - 中英文界面一键切换
 - 家庭锦标赛与机器人挑战均使用 10 分钟盲注级别，按标准序列逐级增长
@@ -152,7 +152,7 @@ docker run --rm -p 10000:10000 -e PORT=10000 -e POKER_DATA_DIR=/var/data -v poke
 - Standard Hold'em rules for 2–9 players, with blinds rotating with the button (heads-up: dealer posts the small blind)
 - Two room modes — blinds or proportional betting — with configurable blinds, starting stack and seats
 - Three fair AI levels (casual / regular / expert), acting in strict seat order with natural thinking pauses and situational bluffs
-- No sign-up: enter a nickname and play; connected idle players are not timed out, while a disconnected seat is retained for up to one hour as long as the same service process remains alive
+- No sign-up: enter a nickname and play; connected idle players are not timed out, while a disconnected seat is retained for one hour and then becomes a spectator as long as the same service process remains alive
 - Room creators can dissolve a room with one click
 - One-click Chinese / English UI switch
 - Bot challenges and family tournaments use ten-minute blind levels with a standard increasing schedule

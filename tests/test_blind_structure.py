@@ -63,6 +63,17 @@ class BlindStructureTestCase(unittest.TestCase):
         table.apply_blind_level_for_next_hand(1001)
         self.assertEqual((table.blind_level, table.small_blind, table.big_blind), (2, 15, 30))
 
+    def test_long_hand_reports_the_level_that_will_actually_apply_next(self):
+        table = self.make_table()
+        table.resume_tournament_clock(0)
+        table.game_stage = GameStage.PRE_FLOP
+
+        state = table.get_table_state(now=1201)
+
+        self.assertEqual(state['blind_level'], 1)
+        self.assertEqual(state['blind_seconds_remaining'], 0)
+        self.assertEqual((state['next_small_blind'], state['next_big_blind']), (20, 40))
+
 
 if __name__ == '__main__':
     unittest.main()
